@@ -1,6 +1,6 @@
 /*
  * ================================================================
- *  NEO RACING 3D  –  OpenGL / FreeGLUT
+ *  NEO RACING 3D  –  OpenGL / FreeGLUT (Power-Up Editon)
  *  ================================================================
  *
  *  FEATURES
@@ -8,8 +8,8 @@
  *  • 3D rendering with glowing neon retro-wave style
  *  • Highway lane mechanics with scrolling grid ground
  *  • Accelerating endless runner gameplay
- *  • High speed motion blur/trail effects
- *  • Particle explosion effects on crash
+ *  • 4 Power-Up Types (Shield, Ghost Mode, Time Slow, Bonus Score)
+ *  • Particle explosion effects on crash or powerup pickup
  *  • Score and speed progression
  *
  *  CONTROLS
@@ -63,9 +63,25 @@ struct Vec3 {
     Vec3(float x=0, float y=0, float z=0): x(x), y(y), z(z) {}
 };
 
-struct Obstacle {
+enum EntityType {
+    ENT_ENEMY_CAR,
+    ENT_POWERUP
+};
+
+enum PowerUpType {
+    PU_SHIELD,      // Ice Blue - Absorbs 1 crash
+    PU_GHOST,       // Purple - Pass through cars
+    PU_SLOW_MO,     // Yellow - Halves speed temporarily
+    PU_SCORE_BONUS, // Green - +100 Points flat
+    PU_COUNT
+};
+
+struct Entity {
+    EntityType type;
     int lane;
     float z;
+    PowerUpType puType;
+    float spin; // Used for rendering powerups
 };
 
 struct Particle {
@@ -80,10 +96,11 @@ struct Particle {
 static int gPlayerLane = 1; // 0, 1, 2
 static float gPlayerZ = 0.0f;
 
-static std::vector<Obstacle> gObstacles;
+static std::vector<Entity> gEntities;
 static std::vector<Particle> gParticles;
 
-static float gSpeed = 20.0f; // Units per second
+static float gBaseSpeed = 20.0f; // Target speed naturally scaling
+static float gCurrentSpeed = 20.0f; // Actual speed (affected by slow-mo)
 static float gScrollOffset = 0.0f;
 
 static int gScore = 0;
@@ -96,6 +113,13 @@ static float gCameraShake = 0.0f;
 static float gCrashFlash = 0.0f;
 
 static float gSpawnTimer = 0.0f;
+
+// Power-Up States
+static bool gShield = false;
+static float gGhostTimer = 0.0f;
+static float gSlowTimer = 0.0f;
+static char gPickupMessage[128] = "";
+static float gPickupMessageTimer = 0.0f;
 
 // ──────────────────────────────────────────────────────────────
 //  Helpers
@@ -119,19 +143,58 @@ static void spawnParticles(Vec3 pos, float r, float g, float b, int count) {
     }
 }
 
-static void spawnObstacle() {
-    Obstacle obs;
-    obs.lane = rand() % NUM_LANES;
-    obs.z = ROAD_Z_END - 5.0f; // Spawn beyond the far horizon
-    gObstacles.push_back(obs);
+static void setPickupMessage(const char* msg) {
+    snprintf(gPickupMessage, sizeof(gPickupMessage), "%s", msg);
+    gPickupMessageTimer = 2.0f; 
+}
+
+static void applyPowerup(PowerUpType pu) {
+    switch(pu) {
+        case PU_SHIELD:
+            gShield = true;
+            setPickupMessage("SHIELD ACTIVATED!");
+            break;
+        case PU_GHOST:
+            gGhostTimer = 8.0f;
+            setPickupMessage("GHOST MODE! (8s)");
+            break;
+        case PU_SLOW_MO:
+            gSlowTimer = 5.0f;
+            setPickupMessage("TIME SLOWED! (5s)");
+            break;
+        case PU_SCORE_BONUS:
+            gScore += 100;
+            if (gScore > gHighScore) gHighScore = gScore;
+            setPickupMessage("+100 POINT BONUS!");
+            break;
+        default: break;
+    }
+}
+
+static void spawnEntity() {
+    Entity ent;
+    ent.lane = rand() % NUM_LANES;
+    ent.z = ROAD_Z_END - 5.0f; // Spawn beyond horizon
+    ent.spin = 0.0f;
+    
+    // 15% chance to be a power-up instead of a car
+    if ((rand() % 100) < 15) {
+        ent.type = ENT_POWERUP;
+        ent.puType = (PowerUpType)(rand() % PU_COUNT);
+    } else {
+        ent.type = ENT_ENEMY_CAR;
+    }
+    
+    gEntities.push_back(ent);
 }
 
 static void resetGame() {
     gPlayerLane = 1;
-    gObstacles.clear();
+    gEntities.clear();
     gParticles.clear();
     
-    gSpeed = 15.0f;
+    gBaseSpeed = 15.0f;
+    gCurrentSpeed = 15.0f;
     gScore = 0;
     gScoreAccumulator = 0.0f;
     gGameOver = false;
@@ -139,6 +202,11 @@ static void resetGame() {
     gSpawnTimer = 0.0f;
     gCameraShake = 0.0f;
     gCrashFlash = 0.0f;
+    
+    gShield = false;
+    gGhostTimer = 0.0f;
+    gSlowTimer = 0.0f;
+    gPickupMessageTimer = 0.0f;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -149,44 +217,76 @@ static void updatePhysics(int) {
     float dt = 1.0f / 60.0f;
     
     if (!gGameOver) {
-        gSpeed += dt * 0.15f; // Gradually increase speed over time
+        gBaseSpeed += dt * 0.15f; // Gradually increase natural speed
         
-        gScrollOffset += gSpeed * dt;
+        // Power-Up Timers
+        if (gGhostTimer > 0.0f) gGhostTimer -= dt;
+        if (gSlowTimer > 0.0f) {
+            gSlowTimer -= dt;
+            gCurrentSpeed = gBaseSpeed * 0.5f; // Half speed in slow-mo
+        } else {
+            gCurrentSpeed = gBaseSpeed; 
+        }
+        
+        if (gPickupMessageTimer > 0.0f) gPickupMessageTimer -= dt;
+        
+        gScrollOffset += gCurrentSpeed * dt;
         if (gScrollOffset > 4.0f) gScrollOffset -= 4.0f;
         
-        gScoreAccumulator += gSpeed * dt * 0.1f;
+        gScoreAccumulator += gCurrentSpeed * dt * 0.1f;
         if (gScoreAccumulator >= 1.0f) {
             gScore += 1;
             gScoreAccumulator -= 1.0f;
             if (gScore > gHighScore) gHighScore = gScore;
         }
 
-        // Move obstacles towards player (positive Z direction)
-        for (size_t i = 0; i < gObstacles.size(); i++) {
-            gObstacles[i].z += gSpeed * dt;
+        // Move entities towards player (positive Z direction)
+        for (size_t i = 0; i < gEntities.size(); i++) {
+            gEntities[i].z += gCurrentSpeed * dt;
+            gEntities[i].spin += 150.0f * dt;
             
             // Collision Check
-            if (gObstacles[i].lane == gPlayerLane) {
-                if (gObstacles[i].z > gPlayerZ - 1.0f && gObstacles[i].z < gPlayerZ + 1.0f) {
-                    gGameOver = true;
-                    gCameraShake = 1.5f;
-                    gCrashFlash = 1.0f;
-                    spawnParticles(Vec3(getLaneX(gPlayerLane), 0.5f, gPlayerZ), 1.0f, 0.2f, 0.0f, 40);
+            if (gEntities[i].lane == gPlayerLane) {
+                if (gEntities[i].z > gPlayerZ - 1.2f && gEntities[i].z < gPlayerZ + 1.2f) {
+                    float ex = getLaneX(gPlayerLane);
+                    if (gEntities[i].type == ENT_ENEMY_CAR) {
+                        if (gGhostTimer > 0.0f) {
+                            // Pass through safely (Ghost Mode)
+                        } else if (gShield) {
+                            // Shield break
+                            gShield = false;
+                            setPickupMessage("SHIELD BROKEN!");
+                            gCameraShake = 0.6f;
+                            gEntities[i].z = ROAD_Z_START + 10.0f; // Throw past player
+                            spawnParticles(Vec3(ex, 0.5f, gPlayerZ), 0.2f, 0.8f, 1.0f, 25);
+                        } else {
+                            // Crash
+                            gGameOver = true;
+                            gCameraShake = 1.5f;
+                            gCrashFlash = 1.0f;
+                            spawnParticles(Vec3(ex, 0.5f, gPlayerZ), 1.0f, 0.2f, 0.0f, 40);
+                        }
+                    } else if (gEntities[i].type == ENT_POWERUP) {
+                        // Pickup Powerup
+                        applyPowerup(gEntities[i].puType);
+                        gEntities[i].z = ROAD_Z_START + 10.0f; // Consume
+                        spawnParticles(Vec3(ex, 0.5f, gPlayerZ), 1.0f, 1.0f, 0.0f, 20);
+                    }
                 }
             }
         }
         
-        // Remove obstacles behind camera
-        gObstacles.erase(
-            std::remove_if(gObstacles.begin(), gObstacles.end(), [](const Obstacle& o){ return o.z > ROAD_Z_START + 5.0f; }),
-            gObstacles.end());
+        // Remove entities behind camera
+        gEntities.erase(
+            std::remove_if(gEntities.begin(), gEntities.end(), [](const Entity& e){ return e.z > ROAD_Z_START + 5.0f; }),
+            gEntities.end());
 
-        // Spawn new obstacles
+        // Spawn new entities
         gSpawnTimer -= dt;
         if (gSpawnTimer <= 0.0f) {
-            spawnObstacle();
-            // Spawn rate gets faster as you speed up
-            gSpawnTimer = frand(8.0f / gSpeed, 18.0f / gSpeed); 
+            spawnEntity();
+            // Spawn rate gets faster as you speed up (use base speed to prevent slow-mo clusters)
+            gSpawnTimer = frand(8.0f / gBaseSpeed, 18.0f / gBaseSpeed); 
         }
     }
     
@@ -275,7 +375,7 @@ static void display() {
     
     // Camera is behind and above the player
     gluLookAt(0.0f + shakeX, 3.5f + shakeY, 6.0f + shakeZ,  // Eye
-              0.0f, 0.0f, gPlayerZ - 10.0f,                 // Center (looking far down the road)
+              0.0f, 0.0f, gPlayerZ - 10.0f,                 // Center (looking down road)
               0.0f, 1.0f, 0.0f);                            // Up
 
     GLfloat lpos[] = { 0.0f, 10.0f, 5.0f, 1.0f };
@@ -314,11 +414,16 @@ static void display() {
     glLineWidth(2.0f);
     
     // Fast moving horizontal lines
-    glColor4f(1.0f, 0.0f, 0.8f, 0.5f); 
+    // If in ghost mode, turn grid slightly purple
+    float gcR = (gGhostTimer > 0.0f) ? 0.8f : 1.0f;
+    float gcG = (gGhostTimer > 0.0f) ? 0.0f : 0.0f;
+    float gcB = (gGhostTimer > 0.0f) ? 1.0f : 0.8f;
+    
+    glColor4f(gcR, gcG, gcB, 0.5f); 
     glBegin(GL_LINES);
     for (float z = ROAD_Z_START; z > ROAD_Z_END; z -= 4.0f) {
-        float offsetZ = z + gScrollOffset; // Move towards camera
-        if (offsetZ > ROAD_Z_START) offsetZ -= (ROAD_Z_START - ROAD_Z_END); // Wrapping
+        float offsetZ = z + gScrollOffset; 
+        if (offsetZ > ROAD_Z_START) offsetZ -= (ROAD_Z_START - ROAD_Z_END);
         glVertex3f(-hw, 0.0f, offsetZ);
         glVertex3f( hw, 0.0f, offsetZ);
     }
@@ -339,11 +444,29 @@ static void display() {
     // Draw Player Car
     if (!gGameOver) {
         float px = getLaneX(gPlayerLane);
-        // Player is a sleek futuristic box
+        float alpha = (gGhostTimer > 0.0f) ? 0.4f : 1.0f;
+        float pcr = (gShield) ? 0.0f : 0.0f;
+        float pcg = (gShield) ? 0.8f : 1.0f;
+        float pcb = (gShield) ? 1.0f : 1.0f;
+        
         drawBox(px, 0.4f, gPlayerZ, 
                 1.4f, 0.8f, 2.5f, 
-                0.0f, 1.0f, 1.0f);
-                
+                pcr, pcg, pcb, alpha);
+        
+        // Draw Shield Ring
+        if (gShield) {
+            glDisable(GL_LIGHTING);
+            glEnable(GL_BLEND);
+            glColor4f(0.0f, 0.8f, 1.0f, 0.6f + 0.3f * sin(gGlobalTime * 10.0f));
+            glLineWidth(3.0f);
+            glPushMatrix();
+            glTranslatef(px, 0.4f, gPlayerZ);
+            glRotatef(90, 1.0f, 0.0f, 0.0f);
+            glutWireTorus(0.1, 1.8, 10, 20);
+            glPopMatrix();
+            glEnable(GL_LIGHTING);
+        }
+
         // Engine exhaust glow
         glDisable(GL_LIGHTING);
         glEnable(GL_BLEND);
@@ -356,13 +479,36 @@ static void display() {
         glEnable(GL_LIGHTING);
     }
 
-    // Draw Obstacles (Enemy cars/blocks)
-    for (size_t i = 0; i < gObstacles.size(); i++) {
-        float ox = getLaneX(gObstacles[i].lane);
-        float oz = gObstacles[i].z;
-        drawBox(ox, 0.5f, oz, 
-                1.4f, 1.0f, 2.0f, 
-                1.0f, 0.1f, 0.3f);
+    // Draw Entities
+    for (size_t i = 0; i < gEntities.size(); i++) {
+        float ex = getLaneX(gEntities[i].lane);
+        float ez = gEntities[i].z;
+        
+        if (gEntities[i].type == ENT_ENEMY_CAR) {
+            drawBox(ex, 0.5f, ez, 
+                    1.4f, 1.0f, 2.0f, 
+                    1.0f, 0.1f, 0.3f);
+        } else if (gEntities[i].type == ENT_POWERUP) {
+            glDisable(GL_LIGHTING);
+            glEnable(GL_BLEND);
+            glPushMatrix();
+            glTranslatef(ex, 0.6f + 0.2f * sin(gGlobalTime * 5.0f + ez), ez);
+            glRotatef(gEntities[i].spin, 0.0f, 1.0f, 0.0f);
+            glScalef(0.6f, 0.6f, 0.6f);
+            
+            float r, g, b;
+            if (gEntities[i].puType == PU_SHIELD) { r=0; g=0.8; b=1; }
+            else if (gEntities[i].puType == PU_GHOST) { r=0.8; g=0; b=1; }
+            else if (gEntities[i].puType == PU_SLOW_MO) { r=1; g=1; b=0; }
+            else { r=0; g=1; b=0; } // Bonus
+            
+            glColor4f(r, g, b, 0.8f);
+            glutSolidOctahedron();
+            glColor4f(1.0f, 1.0f, 1.0f, 0.8f);
+            glutWireOctahedron();
+            glPopMatrix();
+            glEnable(GL_LIGHTING);
+        }
     }
 
     // Draw Particles
@@ -412,8 +558,34 @@ static void display() {
     snprintf(buf, sizeof(buf), "BEST: %d", gHighScore);
     drawText2D(-0.95f, 0.82f, buf, 0.5f, 0.5f, 0.5f, GLUT_BITMAP_HELVETICA_18);
     
-    snprintf(buf, sizeof(buf), "SPEED: %.0f MPH", gSpeed * 5.0f);
+    snprintf(buf, sizeof(buf), "SPEED: %.0f MPH", gCurrentSpeed * 5.0f);
     drawText2D(-0.95f, 0.74f, buf, 0.0f, 1.0f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+
+    // Active Powerups HUD
+    float py = -0.7f;
+    if (gShield) {
+        drawText2D(-0.95f, py, "[ SHIELD ACTIVE ]", 0.0f, 0.8f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+        py -= 0.08f;
+    }
+    if (gGhostTimer > 0.0f) {
+        snprintf(buf, sizeof(buf), "[ GHOST MODE : %.1fs ]", gGhostTimer);
+        drawText2D(-0.95f, py, buf, 0.8f, 0.0f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+        py -= 0.08f;
+    }
+    if (gSlowTimer > 0.0f) {
+        snprintf(buf, sizeof(buf), "[ SLOW MOTION : %.1fs ]", gSlowTimer);
+        drawText2D(-0.95f, py, buf, 1.0f, 1.0f, 0.0f, GLUT_BITMAP_HELVETICA_18);
+        py -= 0.08f;
+    }
+
+    // Pickup Message Center HUD
+    if (gPickupMessageTimer > 0.0f) {
+        float alpha = fmin(1.0f, gPickupMessageTimer * 2.0f);
+        glEnable(GL_BLEND);
+        glColor4f(1.0f, 1.0f, 1.0f, alpha);
+        glRasterPos2f(-0.2f, 0.3f);
+        for (const char* p = gPickupMessage; *p; p++) glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, *p);
+    }
 
     if (gGameOver) {
         glEnable(GL_BLEND);
@@ -462,7 +634,7 @@ int main(int argc, char** argv) {
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
     glutInitWindowSize(WIN_W, WIN_H);
-    glutCreateWindow("Neo Racing 3D @alamin");
+    glutCreateWindow("Neo Racing 3D: Power-Up Edition @alamin");
 
     glClearColor(0.01f, 0.02f, 0.05f, 1.0f);
     resetGame();
