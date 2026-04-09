@@ -60,6 +60,7 @@ The audio system expects a valid sub-directory. Ensure the `audio/` folder is pl
 ## ⌨️ Global Controls
 
 * **Arrow Keys:** Steer, Move, Navigate Grid
+* **P / SPACE:** Pause / Resume the game
 * **R:** Fast Restart / Respawn
 * **ESC:** Power off / Quit to Desktop
 

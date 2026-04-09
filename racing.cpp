@@ -68,6 +68,18 @@ static void stopBGM() {
 #endif
 }
 
+static void pauseBGM() {
+#ifdef _WIN32
+    mciSendStringA("pause bgm", NULL, 0, NULL);
+#endif
+}
+
+static void resumeBGM() {
+#ifdef _WIN32
+    mciSendStringA("resume bgm", NULL, 0, NULL);
+#endif
+}
+
 static void playSFX(const char* file) {
 #ifdef _WIN32
     // SND_NODEFAULT = Silently fail if file is missing (no Windows error ding)
@@ -143,6 +155,7 @@ static int gScore = 0;
 static int gHighScore = 0;
 static float gScoreAccumulator = 0.0f;
 static bool gGameOver = false;
+static bool gPaused = false; // New Pause state
 
 static float gGlobalTime = 0.0f;
 static float gCameraShake = 0.0f;
@@ -236,6 +249,7 @@ static void resetGame() {
     gScore = 0;
     gScoreAccumulator = 0.0f;
     gGameOver = false;
+    gPaused = false;
 
     gSpawnTimer = 0.0f;
     gCameraShake = 0.0f;
@@ -254,6 +268,12 @@ static void resetGame() {
 //  Physics / Update
 // ──────────────────────────────────────────────────────────────
 static void updatePhysics(int) {
+    if (gPaused) {
+        glutPostRedisplay();
+        glutTimerFunc(16, updatePhysics, 0);
+        return;
+    }
+
     gGlobalTime += 1.0f / 60.0f;
     float dt = 1.0f / 60.0f;
 
@@ -746,8 +766,20 @@ static void display() {
         float alpha = fmin(1.0f, gPickupMessageTimer * 2.0f);
         glEnable(GL_BLEND);
         glColor4f(1.0f, 1.0f, 1.0f, alpha);
-        glRasterPos2f(-0.2f, 0.3f);
+        glRasterPos2f(-0.2f, 0.65f); // Moved up to prevent obscuring the cars
         for (const char* p = gPickupMessage; *p; p++) glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, *p);
+    }
+    
+    // Pause Overlay
+    if (gPaused && !gGameOver) {
+        glEnable(GL_BLEND);
+        glColor4f(0.0f, 0.0f, 0.0f, 0.6f);
+        glBegin(GL_QUADS);
+        glVertex2f(-1, -1); glVertex2f(1, -1); glVertex2f(1, 1); glVertex2f(-1, 1);
+        glEnd();
+
+        drawText2D(-0.15f, 0.1f, "PAUSED", 1.0f, 1.0f, 1.0f, GLUT_BITMAP_TIMES_ROMAN_24);
+        drawText2D(-0.25f, -0.1f, "Press P to Resume", 0.7f, 0.7f, 0.7f, GLUT_BITMAP_HELVETICA_18);
     }
 
     if (gGameOver) {
@@ -787,6 +819,13 @@ static void specialKeyDown(int key, int, int) {
 static void normalKeyboard(unsigned char key, int, int) {
     if (key == 27) exit(0);
     if (key == 'r' || key == 'R') resetGame();
+    if (key == 'p' || key == 'P' || key == ' ') {
+        if (!gGameOver) {
+            gPaused = !gPaused;
+            if (gPaused) pauseBGM();
+            else resumeBGM();
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
