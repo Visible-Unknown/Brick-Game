@@ -82,7 +82,7 @@ struct Star {
     float speed;
 };
 
-enum PowerupType { PT_TRIPLE, PT_SHIELD };
+enum PowerupType { PT_TRIPLE, PT_SHIELD, PT_RAPID, PT_SLOW, PT_HEALTH };
 struct Powerup {
     Vec3 pos;
     PowerupType type;
@@ -116,9 +116,11 @@ static bool gGameOver = false;
 
 static float gGlobalTime = 0.0f;
 static float gCameraShake = 0.0f;
-static float gTripleShotTimer = 0.0f;
 static bool gShieldActive = false;
 static bool gPaused = false;
+static float gTripleShotTimer = 0.0f;
+static float gRapidFireTimer = 0.0f;
+static float gTimeSlowTimer = 0.0f;
 static char gPowerupMsg[64] = "";
 static float gPowerupMsgTimer = 0.0f;
 static float gMsgColor[3] = {1, 1, 1};
@@ -175,6 +177,8 @@ static void resetGame() {
     gGameOver = false;
     gCameraShake = 0.0f;
     gTripleShotTimer = 0.0f;
+    gRapidFireTimer = 0.0f;
+    gTimeSlowTimer = 0.0f;
     gShieldActive = false;
     gPaused = false;
 #ifdef _WIN32
@@ -186,7 +190,12 @@ static void spawnPowerup(Vec3 pos) {
     if (frand(0, 1) > 0.15f) return; // 15% chance
     Powerup p;
     p.pos = pos;
-    p.type = (frand(0, 1) > 0.5f) ? PT_TRIPLE : PT_SHIELD;
+    float r = frand(0, 5);
+    if (r < 1.0f)      p.type = PT_TRIPLE;
+    else if (r < 2.0f) p.type = PT_SHIELD;
+    else if (r < 3.0f) p.type = PT_RAPID;
+    else if (r < 4.0f) p.type = PT_SLOW;
+    else               p.type = PT_HEALTH;
     p.active = true;
     gPowerups.push_back(p);
 }
@@ -199,14 +208,18 @@ static void updatePhysics(int) {
     float dt = 1.0f / 60.0f;
     
     if (gPowerupMsgTimer > 0.0f) gPowerupMsgTimer -= dt;
+    if (gTripleShotTimer > 0.0f) gTripleShotTimer -= dt;
+    if (gRapidFireTimer > 0.0f) gRapidFireTimer -= dt;
+    if (gTimeSlowTimer > 0.0f) gTimeSlowTimer -= dt;
 
     if (gPaused) {
         glutPostRedisplay();
         glutTimerFunc(16, updatePhysics, 0);
         return;
     }
+    float timeScale = (gTimeSlowTimer > 0.0f) ? 0.3f : 1.0f;
     for (size_t i = 0; i < gStars.size(); i++) {
-        gStars[i].pos.y -= gStars[i].speed * dt;
+        gStars[i].pos.y -= gStars[i].speed * dt * timeScale;
         if (gStars[i].pos.y < 0.0f) {
             gStars[i].pos.y = ARENA_H;
             gStars[i].pos.x = frand(-ARENA_W, ARENA_W);
@@ -226,6 +239,7 @@ static void updatePhysics(int) {
         if (gTripleShotTimer > 0.0f) gTripleShotTimer -= dt;
 
         if (gKeySpace && gFireCooldown <= 0.0f) {
+            float fireRate = (gRapidFireTimer > 0.0f) ? 0.07f : 0.15f;
             if (gTripleShotTimer > 0.0f) {
                 // Triple Shot
                 for (int angle = -1; angle <= 1; angle++) {
@@ -243,7 +257,7 @@ static void updatePhysics(int) {
                 b.active = true;
                 gBullets.push_back(b);
             }
-            gFireCooldown = 0.15f; 
+            gFireCooldown = fireRate; 
 #ifdef _WIN32
             // Realistic laser shot
             PlaySound(TEXT("shooter music/fire_new.mp3"), NULL, SND_FILENAME | SND_ASYNC);
@@ -282,6 +296,18 @@ static void updatePhysics(int) {
                     gShieldActive = true;
                     strcpy(gPowerupMsg, "SHIELD REINFORCED!");
                     gMsgColor[0] = 0.0f; gMsgColor[1] = 1.0f; gMsgColor[2] = 1.0f; // Cyan
+                } else if (gPowerups[i].type == PT_RAPID) {
+                    gRapidFireTimer = 5.0f;
+                    strcpy(gPowerupMsg, "HYPER-DRIVE ENGAGED!");
+                    gMsgColor[0] = 1.0f; gMsgColor[1] = 0.5f; gMsgColor[2] = 0.0f; // Orange
+                } else if (gPowerups[i].type == PT_SLOW) {
+                    gTimeSlowTimer = 5.0f;
+                    strcpy(gPowerupMsg, "NEON OVERDRIVE ACTIVE!");
+                    gMsgColor[0] = 1.0f; gMsgColor[1] = 0.0f; gMsgColor[2] = 1.0f; // Magenta
+                } else if (gPowerups[i].type == PT_HEALTH) {
+                    if (gPlayerHP < 3) gPlayerHP++;
+                    strcpy(gPowerupMsg, "SYSTEM REPAIR COMPLETE!");
+                    gMsgColor[0] = 0.0f; gMsgColor[1] = 1.0f; gMsgColor[2] = 0.0f; // Green
                 }
                 gPowerupMsgTimer = 2.0f;
                 gScore += 50;
@@ -309,7 +335,9 @@ static void updatePhysics(int) {
         for (size_t i = 0; i < gEnemies.size(); i++) {
             if (!gEnemies[i].active) continue;
             
-            gEnemies[i].pos.y -= (4.0f + gDifficulty * 0.5f) * dt;
+            float enemySpeed = (4.0f + gDifficulty * 0.5f) * dt;
+            if (gTimeSlowTimer > 0.0f) enemySpeed *= 0.4f;
+            gEnemies[i].pos.y -= enemySpeed;
             
             // Check Collision with player
             float dx = fabsf(gEnemies[i].pos.x - gPlayerX);
@@ -532,7 +560,10 @@ static void drawPowerup(const Powerup& p) {
     glRotatef(gGlobalTime * 150.0f, 0, 1, 0);
     
     if (p.type == PT_TRIPLE) drawBox(0, 0, 0, 0.8f, 0.8f, 0.8f, 1.0f, 1.0f, 0.0f);
-    else drawBox(0, 0, 0, 0.8f, 0.8f, 0.8f, 0.0f, 1.0f, 1.0f);
+    else if (p.type == PT_SHIELD) drawBox(0, 0, 0, 0.8f, 0.8f, 0.8f, 0.0f, 1.0f, 1.0f);
+    else if (p.type == PT_RAPID) drawBox(0, 0, 0, 0.8f, 0.8f, 0.8f, 1.0f, 0.5f, 0.0f); // Orange
+    else if (p.type == PT_SLOW)  drawBox(0, 0, 0, 0.8f, 0.8f, 0.8f, 1.0f, 0.0f, 1.0f); // Magenta
+    else if (p.type == PT_HEALTH) drawBox(0, 0, 0, 0.8f, 0.8f, 0.8f, 0.0f, 1.0f, 0.0f); // Green
     
     // Spinning wireframe
     glDisable(GL_LIGHTING);
@@ -677,6 +708,18 @@ static void display() {
     if (gShieldActive) {
         drawText2D(-0.95f, -0.82f, "SHIELD: ACTIVE", 0.0f, 1.0f, 1.0f);
     }
+    if (gRapidFireTimer > 0.0f) {
+        snprintf(buf, sizeof(buf), "HYPER-DRIVE: %.1fs", gRapidFireTimer);
+        drawText2D(-0.95f, -0.82f + (gShieldActive ? -0.08f : 0.0f), buf, 1.0f, 0.5f, 0.0f);
+    }
+    if (gTimeSlowTimer > 0.0f) {
+        snprintf(buf, sizeof(buf), "NEON OVERDRIVE: %.1fs", gTimeSlowTimer);
+        // Stack below shield and rapid fire
+        float y = -0.82f;
+        if (gShieldActive) y -= 0.08f;
+        if (gRapidFireTimer > 0.0f) y -= 0.08f;
+        drawText2D(-0.95f, y, buf, 1.0f, 0.0f, 1.0f);
+    }
 
     if (gGameOver) {
         glEnable(GL_BLEND);
@@ -761,6 +804,7 @@ int main(int argc, char** argv) {
     // Start Background Music
 #ifdef _WIN32
     mciSendString("open \"shooter music/bgm_new.mp3\" type mpegvideo alias bgm", NULL, 0, NULL);
+    mciSendString("setaudio bgm volume to 500", NULL, 0, NULL);
     mciSendString("play bgm repeat", NULL, 0, NULL);
 #endif
 
