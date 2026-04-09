@@ -35,7 +35,10 @@ Look out for rotating geometric 3D crystals on the track. They grant temporary t
 
 ## 🛠️ Build & Installation
 
-### Requirements
+### 🎮 Play Without Installation (Windows)
+You don't need to set up a C++ development environment to play! Simply download the compiled `racing.exe` file and the `audio/` folder from this repository, place them together in the exact same directory, and double-click `racing.exe` to start racing instantly.
+
+### Requirements (For Compiling from Source)
 * C++ Compiler (`g++` / MinGW)
 * OpenGL / FreeGLUT Libraries
 * Windows environment (Recommended for native audio engine support, though the core gameplay runs fundamentally on Linux/macOS).
