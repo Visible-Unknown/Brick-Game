@@ -722,14 +722,63 @@ static void display() {
     }
 
     if (gGameOver) {
+        // ── Animated Game Over / Credits Screen ──────────────────────
         glEnable(GL_BLEND);
-        glColor4f(0.0f, 0.0f, 0.0f, 0.7f);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        // Dark animated backdrop
+        float bgPulse = 0.04f + 0.03f * sinf(gGlobalTime * 1.2f);
+        glColor4f(bgPulse * 0.2f, 0.0f, bgPulse, 0.88f);
         glBegin(GL_QUADS);
-        glVertex2f(-1, -1); glVertex2f(1, -1); glVertex2f(1, 1); glVertex2f(-1, 1);
+        glVertex2f(-1,-1); glVertex2f(1,-1); glVertex2f(1,1); glVertex2f(-1,1);
         glEnd();
-        
-        drawText2D(-0.25f, 0.1f, "MISSION FAILED", 1.0f, 0.2f, 0.2f, GLUT_BITMAP_TIMES_ROMAN_24);
-        drawText2D(-0.35f, -0.1f, "Press R to Restart System", 1.0f, 1.0f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+
+        // Neon divider lines
+        glLineWidth(1.5f);
+        float lineAlpha = 0.6f + 0.4f * sinf(gGlobalTime * 3.0f);
+        glColor4f(1.0f, 0.2f, 0.0f, lineAlpha);
+        glBegin(GL_LINES);
+        glVertex2f(-0.85f, 0.38f); glVertex2f(0.85f, 0.38f);
+        glVertex2f(-0.85f,-0.38f); glVertex2f(0.85f,-0.38f);
+        glEnd();
+
+        // MISSION FAILED title – pulsing red
+        float t = gGlobalTime;
+        float pr = 0.9f + 0.1f * sinf(t * 4.0f);
+        float pb = 0.1f + 0.1f * sinf(t * 3.0f + 1.0f);
+        drawText2D(-0.28f, 0.55f, "MISSION FAILED", pr, 0.0f, pb, GLUT_BITMAP_TIMES_ROMAN_24);
+
+        // Score summary
+        char buf2[128];
+        snprintf(buf2, sizeof(buf2), "FINAL SCORE :  %05d", gScore);
+        drawText2D(-0.32f, 0.18f, buf2, 1.0f, 0.85f, 0.0f, GLUT_BITMAP_TIMES_ROMAN_24);
+
+        snprintf(buf2, sizeof(buf2), "BEST SCORE  :  %05d", gHighScore);
+        drawText2D(-0.32f, 0.07f, buf2, 0.5f, 0.8f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+
+        // Restart hint (blinking)
+        float blink = 0.55f + 0.45f * sinf(t * 2.5f);
+        drawText2D(-0.30f, -0.18f, "[ Press  R  to  Restart  System ]",
+                   blink, blink, blink, GLUT_BITMAP_HELVETICA_18);
+
+        // Developer credit bar
+        glColor4f(0.05f, 0.0f, 0.12f, 0.78f);
+        glBegin(GL_QUADS);
+        glVertex2f(-1.0f,-0.72f); glVertex2f(1.0f,-0.72f);
+        glVertex2f(1.0f,-0.52f); glVertex2f(-1.0f,-0.52f);
+        glEnd();
+
+        float cr = 1.0f;
+        float cg = 0.3f + 0.3f * sinf(t * 2.0f + 2.0f);
+        float cb = 0.0f;
+        glLineWidth(2.0f);
+        glColor4f(cr, cg, cb, 0.9f);
+        glBegin(GL_LINES);
+        glVertex2f(-1.0f,-0.52f); glVertex2f(1.0f,-0.52f);
+        glEnd();
+
+        drawText2D(-0.25f, -0.67f, "Developed by  AL AMIN HOSSAIN",
+                   cr, 0.85f, cb, GLUT_BITMAP_HELVETICA_18);
     } else if (gPaused) {
         glEnable(GL_BLEND);
         glColor4f(0.0f, 0.0f, 0.0f, 0.5f);

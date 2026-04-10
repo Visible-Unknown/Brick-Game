@@ -783,14 +783,66 @@ static void display() {
     }
 
     if (gGameOver) {
+        // ── Animated Game Over / Credits Screen ──────────────────────
         glEnable(GL_BLEND);
-        glColor4f(0.0f, 0.0f, 0.0f, 0.7f);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        // Dark animated backdrop – subtle orange pulse (crash feel)
+        float bgPulse = 0.05f + 0.03f * sinf(gGlobalTime * 1.2f);
+        glColor4f(bgPulse, bgPulse * 0.1f, 0.0f, 0.88f);
         glBegin(GL_QUADS);
-        glVertex2f(-1, -1); glVertex2f(1, -1); glVertex2f(1, 1); glVertex2f(-1, 1);
+        glVertex2f(-1,-1); glVertex2f(1,-1); glVertex2f(1,1); glVertex2f(-1,1);
         glEnd();
 
-        drawText2D(-0.25f, 0.1f, "CRASHED!", 1.0f, 0.2f, 0.2f, GLUT_BITMAP_TIMES_ROMAN_24);
-        drawText2D(-0.35f, -0.1f, "Press R to Restart", 1.0f, 1.0f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+        // Neon divider lines
+        glLineWidth(1.5f);
+        float lineAlpha = 0.6f + 0.4f * sinf(gGlobalTime * 3.0f);
+        glColor4f(1.0f, 0.4f, 0.0f, lineAlpha);
+        glBegin(GL_LINES);
+        glVertex2f(-0.85f, 0.38f); glVertex2f(0.85f, 0.38f);
+        glVertex2f(-0.85f,-0.38f); glVertex2f(0.85f,-0.38f);
+        glEnd();
+
+        // CRASHED! title – pulsing orange/red
+        float t = gGlobalTime;
+        float pr = 1.0f;
+        float pg = 0.1f + 0.15f * sinf(t * 4.0f);
+        drawText2D(-0.16f, 0.55f, "CRASHED!", pr, pg, 0.0f, GLUT_BITMAP_TIMES_ROMAN_24);
+
+        // Score summary
+        char gbuf[128];
+        snprintf(gbuf, sizeof(gbuf), "FINAL SCORE :  %d", gScore);
+        drawText2D(-0.28f, 0.18f, gbuf, 1.0f, 0.85f, 0.0f, GLUT_BITMAP_TIMES_ROMAN_24);
+
+        snprintf(gbuf, sizeof(gbuf), "BEST SCORE  :  %d", gHighScore);
+        drawText2D(-0.28f, 0.07f, gbuf, 0.5f, 0.8f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+
+        snprintf(gbuf, sizeof(gbuf), "TOP SPEED   :  %.0f MPH", gBaseSpeed * 5.0f);
+        drawText2D(-0.28f, -0.04f, gbuf, 0.6f, 1.0f, 0.8f, GLUT_BITMAP_HELVETICA_18);
+
+        // Restart hint (blinking)
+        float blink = 0.55f + 0.45f * sinf(t * 2.5f);
+        drawText2D(-0.28f, -0.18f, "[ Press  R  to  Race  Again ]",
+                   blink, blink, blink, GLUT_BITMAP_HELVETICA_18);
+
+        // Developer credit bar
+        glColor4f(0.12f, 0.02f, 0.0f, 0.78f);
+        glBegin(GL_QUADS);
+        glVertex2f(-1.0f,-0.72f); glVertex2f(1.0f,-0.72f);
+        glVertex2f(1.0f,-0.52f); glVertex2f(-1.0f,-0.52f);
+        glEnd();
+
+        float cr = 1.0f;
+        float cg = 0.5f + 0.3f * sinf(t * 2.0f);
+        float cb = 0.0f;
+        glLineWidth(2.0f);
+        glColor4f(cr, cg, cb, 0.9f);
+        glBegin(GL_LINES);
+        glVertex2f(-1.0f,-0.52f); glVertex2f(1.0f,-0.52f);
+        glEnd();
+
+        drawText2D(-0.25f, -0.67f, "Developed by  AL AMIN HOSSAIN",
+                   cr, cg, cb, GLUT_BITMAP_HELVETICA_18);
     }
 
     glutSwapBuffers();
