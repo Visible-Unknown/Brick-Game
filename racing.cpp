@@ -50,6 +50,10 @@
 #include <vector>
 #include <ctime>
 
+#ifndef GL_MULTISAMPLE
+#define GL_MULTISAMPLE 0x809D
+#endif
+
 // ──────────────────────────────────────────────────────────────
 //  Audio System
 // ──────────────────────────────────────────────────────────────
@@ -122,6 +126,12 @@ enum PowerUpType {
     PU_COUNT
 };
 
+enum GameState {
+    STATE_HOME,
+    STATE_PLAY,
+    STATE_GAMEOVER
+};
+
 struct Entity {
     EntityType type;
     int lane;
@@ -154,8 +164,30 @@ static float gScrollOffset = 0.0f;
 static int gScore = 0;
 static int gHighScore = 0;
 static float gScoreAccumulator = 0.0f;
-static bool gGameOver = false;
-static bool gPaused = false; // New Pause state
+
+static GameState gState = STATE_HOME;
+static bool gPaused = false; 
+
+static const char* SAVE_FILE = "highscore.dat";
+
+// ──────────────────────────────────────────────────────────────
+//  Persistence
+// ──────────────────────────────────────────────────────────────
+static void saveHighScore() {
+    FILE* f = fopen(SAVE_FILE, "w");
+    if (f) {
+        fprintf(f, "%d", gHighScore);
+        fclose(f);
+    }
+}
+
+static void loadHighScore() {
+    FILE* f = fopen(SAVE_FILE, "r");
+    if (f) {
+        if (fscanf(f, "%d", &gHighScore) != 1) gHighScore = 0;
+        fclose(f);
+    }
+}
 
 static float gGlobalTime = 0.0f;
 static float gCameraShake = 0.0f;
@@ -248,7 +280,7 @@ static void resetGame() {
     gCurrentSpeed = 15.0f;
     gScore = 0;
     gScoreAccumulator = 0.0f;
-    gGameOver = false;
+    gState = STATE_PLAY;
     gPaused = false;
 
     gSpawnTimer = 0.0f;
@@ -277,7 +309,7 @@ static void updatePhysics(int) {
     gGlobalTime += 1.0f / 60.0f;
     float dt = 1.0f / 60.0f;
 
-    if (!gGameOver) {
+    if (gState == STATE_PLAY) {
         gBaseSpeed += dt * 0.15f;
 
         // ── Smooth Steering & Banking ──
@@ -333,7 +365,8 @@ static void updatePhysics(int) {
                         spawnParticles(Vec3(gEntities[i].lane, 0.5f, gPlayerZ), 0.2f, 0.8f, 1.0f, 25);
                     } else {
                         // Crash !
-                        gGameOver = true;
+                        gState = STATE_GAMEOVER;
+                        saveHighScore();
                         playSFX("audio/crash.wav");
                         stopBGM();
                         gCameraShake = 1.5f;
@@ -359,7 +392,7 @@ static void updatePhysics(int) {
             spawnEntity();
             gSpawnTimer = frand(8.0f / gBaseSpeed, 18.0f / gBaseSpeed);
         }
-    } else {
+    } else if (gState == STATE_GAMEOVER) {
         // Upon death, car rights itself slowly
         gCarRoll += (0.0f - gCarRoll) * 5.0f * dt;
     }
@@ -547,6 +580,96 @@ static void drawText2D(float x, float y, const char* s, float r, float g, float 
     for (const char* p = s; *p; p++) glutBitmapCharacter(font, *p);
 }
 
+static void bitmapAt(float px, float py, const char* s, void* font = GLUT_BITMAP_HELVETICA_18) {
+    glRasterPos2f(px, py);
+    for (const char* c = s; *c; c++) glutBitmapCharacter(font, *c);
+}
+
+static int bitmapWidth(const char* s, void* font = GLUT_BITMAP_HELVETICA_18) {
+    int w = 0; for (const char* c = s; *c; c++) w += glutBitmapWidth(font, *c); return w;
+}
+
+static void bitmapCentered(float cx, float py, const char* s, void* font = GLUT_BITMAP_HELVETICA_18) {
+    bitmapAt(cx - bitmapWidth(s, font) * 0.5f, py, s, font);
+}
+
+// Stroke text with glow halo (call inside 2D ortho context)
+static void strokeCentered(float cx, float cy, const char* s, float scale, float r, float g, float b, float a) {
+    float tw = 0;
+    for (const char* c = s; *c; c++) tw += glutStrokeWidth(GLUT_STROKE_ROMAN, *c);
+    float startX = cx - tw * scale * 0.5f;
+
+    glEnable(GL_BLEND);
+    // Glow pass
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glColor4f(r, g, b, a * 0.35f);
+    glLineWidth(6.0f);
+    glPushMatrix();
+    glTranslatef(startX, cy, 0);
+    glScalef(scale, scale, scale);
+    for (const char* c = s; *c; c++) glutStrokeCharacter(GLUT_STROKE_ROMAN, *c);
+    glPopMatrix();
+
+    // Crisp pass
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(1.0f, 1.0f, 1.0f, a);
+    glLineWidth(2.5f);
+    glPushMatrix();
+    glTranslatef(startX, cy, 0);
+    glScalef(scale, scale, scale);
+    for (const char* c = s; *c; c++) glutStrokeCharacter(GLUT_STROKE_ROMAN, *c);
+    glPopMatrix();
+    glLineWidth(1.0f);
+    glDisable(GL_BLEND);
+}
+
+static void drawHomeScreen() {
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+    glOrtho(-1000, 1000, -1000, 1000, -1, 1);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glDisable(GL_LIGHTING); glDisable(GL_DEPTH_TEST);
+
+    // Dark backdrop overlay for home screen
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.0f, 0.0f, 0.02f, 0.75f);
+    glBegin(GL_QUADS);
+    glVertex2f(-1000, -1000); glVertex2f(1000, -1000);
+    glVertex2f(1000, 1000); glVertex2f(-1000, 1000);
+    glEnd();
+
+    // Title
+    float t = gGlobalTime;
+    float pulse = 0.5f + 0.5f * sinf(t * 2.0f);
+    strokeCentered(0, 350, "NEO RACING 3D", 0.85f, 0.0f, 0.8f, 1.0f, 1.0f);
+
+    // Decorative line
+    glLineWidth(2.0f);
+    glColor4f(0.0f, 0.5f, 1.0f, 0.6f);
+    glBegin(GL_LINES);
+    glVertex2f(-400, 300); glVertex2f(400, 300);
+    glEnd();
+
+    // High Score
+    char buf[64];
+    snprintf(buf, sizeof(buf), "PERSONAL BEST: %d", gHighScore);
+    strokeCentered(0, 50, buf, 0.35f, 1.0f, 0.8f, 0.0f, 0.9f);
+
+    // Controls Info
+    strokeCentered(0, -150, "USE ARROW KEYS TO STEER", 0.22f, 0.6f, 0.6f, 0.6f, 0.8f);
+
+    // Instruction (blinking)
+    float blink = 0.5f + 0.5f * sinf(t * 4.0f);
+    strokeCentered(0, -450, "PRESS SPACE TO START ENGINE", 0.45f, 0.0f, 1.0f, 0.8f, blink);
+
+    // Footer
+    strokeCentered(0, -850, "DEVELOPED BY AL AMIN HOSSAIN", 0.18f, 0.4f, 0.4f, 0.4f, 0.7f);
+
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glEnable(GL_DEPTH_TEST);
+}
+
 // ──────────────────────────────────────────────────────────────
 //  Display
 // ──────────────────────────────────────────────────────────────
@@ -627,8 +750,13 @@ static void display() {
 
     glEnable(GL_LIGHTING);
 
+    // ── Home Screen Overlay ──
+    if (gState == STATE_HOME) {
+        drawHomeScreen();
+    }
+
     // ── Draw Player Car ──
-    if (!gGameOver || gCrashFlash < 0.5f) { // Hide car slightly during intense crash flash
+    if (gState == STATE_PLAY || (gState == STATE_GAMEOVER && gCrashFlash < 0.5f)) { // Hide car slightly during intense crash flash
         float alpha = (gGhostTimer > 0.0f) ? 0.4f : 1.0f;
         float pcr = (gShield) ? 0.0f : 0.0f;
         float pcg = (gShield) ? 0.8f : 1.0f;
@@ -652,7 +780,7 @@ static void display() {
         }
 
         // Engine exhaust glow
-        if (!gGameOver) {
+        if (gState == STATE_PLAY) {
             glDisable(GL_LIGHTING);
             glEnable(GL_BLEND);
             float exhaustFlicker = 0.8f + 0.2f * sin(gGlobalTime * 30.0f);
@@ -726,110 +854,135 @@ static void display() {
         glEnable(GL_DEPTH_TEST);
     }
 
-    // ── HUD 2D Overlay ──
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_FOG);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
+    if (gState == STATE_HOME) {
+        // HUD not drawn in home screen
+    } else {
+        // HUD 2D Overlay
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_FOG);
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
 
-    char buf[128];
-    snprintf(buf, sizeof(buf), "SCORE: %d", gScore);
-    drawText2D(-0.95f, 0.90f, buf, 1.0f, 0.8f, 0.0f, GLUT_BITMAP_TIMES_ROMAN_24);
+        char buf[128];
+        snprintf(buf, sizeof(buf), "SCORE: %d", gScore);
+        drawText2D(-0.95f, 0.90f, buf, 1.0f, 0.8f, 0.0f, GLUT_BITMAP_TIMES_ROMAN_24);
 
-    snprintf(buf, sizeof(buf), "BEST: %d", gHighScore);
-    drawText2D(-0.95f, 0.82f, buf, 0.5f, 0.5f, 0.5f, GLUT_BITMAP_HELVETICA_18);
+        snprintf(buf, sizeof(buf), "BEST: %d", gHighScore);
+        drawText2D(-0.95f, 0.82f, buf, 0.5f, 0.5f, 0.5f, GLUT_BITMAP_HELVETICA_18);
 
-    snprintf(buf, sizeof(buf), "SPEED: %.0f MPH", gCurrentSpeed * 5.0f);
-    drawText2D(-0.95f, 0.74f, buf, 0.0f, 1.0f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+        snprintf(buf, sizeof(buf), "SPEED: %.0f MPH", gCurrentSpeed * 5.0f);
+        drawText2D(-0.95f, 0.74f, buf, 0.0f, 1.0f, 1.0f, GLUT_BITMAP_HELVETICA_18);
 
-    // Active Powerups HUD
-    float py = -0.7f;
-    if (gShield) {
-        drawText2D(-0.95f, py, "[ SHIELD ACTIVE ]", 0.0f, 0.8f, 1.0f, GLUT_BITMAP_HELVETICA_18);
-        py -= 0.08f;
+        // Active Powerups HUD
+        float py = -0.7f;
+        if (gShield) {
+            drawText2D(-0.95f, py, "[ SHIELD ACTIVE ]", 0.0f, 0.8f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+            py -= 0.08f;
+        }
+        if (gGhostTimer > 0.0f) {
+            snprintf(buf, sizeof(buf), "[ GHOST MODE : %.1fs ]", gGhostTimer);
+            drawText2D(-0.95f, py, buf, 0.8f, 0.0f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+            py -= 0.08f;
+        }
+        if (gSlowTimer > 0.0f) {
+            snprintf(buf, sizeof(buf), "[ SLOW MOTION : %.1fs ]", gSlowTimer);
+            drawText2D(-0.95f, py, buf, 1.0f, 1.0f, 0.0f, GLUT_BITMAP_HELVETICA_18);
+            py -= 0.08f;
+        }
+
+        if (gPickupMessageTimer > 0.0f) {
+            float alpha = fmin(1.0f, gPickupMessageTimer * 2.0f);
+            glEnable(GL_BLEND);
+            glColor4f(1.0f, 1.0f, 1.0f, alpha);
+            glRasterPos2f(-0.2f, 0.65f); // Moved up to prevent obscuring the cars
+            for (const char* p = gPickupMessage; *p; p++) glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, *p);
+        }
+        
+        // Pause Overlay
+        if (gPaused && gState == STATE_PLAY) {
+            glEnable(GL_BLEND);
+            glColor4f(0.0f, 0.0f, 0.0f, 0.6f);
+            glBegin(GL_QUADS);
+            glVertex2f(-1, -1); glVertex2f(1, -1); glVertex2f(1, 1); glVertex2f(-1, 1);
+            glEnd();
+
+            drawText2D(-0.15f, 0.1f, "PAUSED", 1.0f, 1.0f, 1.0f, GLUT_BITMAP_TIMES_ROMAN_24);
+            drawText2D(-0.25f, -0.1f, "Press P to Resume", 0.7f, 0.7f, 0.7f, GLUT_BITMAP_HELVETICA_18);
+        }
     }
-    if (gGhostTimer > 0.0f) {
-        snprintf(buf, sizeof(buf), "[ GHOST MODE : %.1fs ]", gGhostTimer);
-        drawText2D(-0.95f, py, buf, 0.8f, 0.0f, 1.0f, GLUT_BITMAP_HELVETICA_18);
-        py -= 0.08f;
-    }
-    if (gSlowTimer > 0.0f) {
-        snprintf(buf, sizeof(buf), "[ SLOW MOTION : %.1fs ]", gSlowTimer);
-        drawText2D(-0.95f, py, buf, 1.0f, 1.0f, 0.0f, GLUT_BITMAP_HELVETICA_18);
-        py -= 0.08f;
-    }
 
-    if (gPickupMessageTimer > 0.0f) {
-        float alpha = fmin(1.0f, gPickupMessageTimer * 2.0f);
-        glEnable(GL_BLEND);
-        glColor4f(1.0f, 1.0f, 1.0f, alpha);
-        glRasterPos2f(-0.2f, 0.65f); // Moved up to prevent obscuring the cars
-        for (const char* p = gPickupMessage; *p; p++) glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, *p);
-    }
-    
-    // Pause Overlay
-    if (gPaused && !gGameOver) {
-        glEnable(GL_BLEND);
-        glColor4f(0.0f, 0.0f, 0.0f, 0.6f);
-        glBegin(GL_QUADS);
-        glVertex2f(-1, -1); glVertex2f(1, -1); glVertex2f(1, 1); glVertex2f(-1, 1);
-        glEnd();
-
-        drawText2D(-0.15f, 0.1f, "PAUSED", 1.0f, 1.0f, 1.0f, GLUT_BITMAP_TIMES_ROMAN_24);
-        drawText2D(-0.25f, -0.1f, "Press P to Resume", 0.7f, 0.7f, 0.7f, GLUT_BITMAP_HELVETICA_18);
-    }
-
-    if (gGameOver) {
+    if (gState == STATE_GAMEOVER) {
         // ── Animated Game Over / Credits Screen ──────────────────────
+        glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+        glOrtho(0, WIN_W, 0, WIN_H, -1, 1);
+        glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+        glDisable(GL_LIGHTING); glDisable(GL_DEPTH_TEST);
+
+        float cx = WIN_W * 0.5f;
+        float t = gGlobalTime;
+
+        // ── Dark animated backdrop ── (matching shooter)
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        // Dark animated backdrop – subtle orange pulse (crash feel)
-        float bgPulse = 0.05f + 0.03f * sinf(gGlobalTime * 1.2f);
-        glColor4f(bgPulse, bgPulse * 0.1f, 0.0f, 0.88f);
+        float bgP = 0.03f + 0.02f * sinf(t * 1.2f);
+        glColor4f(bgP * 0.25f, 0.0f, bgP * 2.0f, 0.88f);
         glBegin(GL_QUADS);
-        glVertex2f(-1,-1); glVertex2f(1,-1); glVertex2f(1,1); glVertex2f(-1,1);
+        glVertex2f(0, 0); glVertex2f(WIN_W, 0); glVertex2f(WIN_W, WIN_H); glVertex2f(0, WIN_H);
         glEnd();
 
-        // Neon divider lines
-        glLineWidth(1.5f);
-        float lineAlpha = 0.6f + 0.4f * sinf(gGlobalTime * 3.0f);
-        glColor4f(1.0f, 0.4f, 0.0f, lineAlpha);
+        // ── Central Panel ──
+        glColor4f(0.02f, 0.0f, 0.07f, 0.72f);
+        float px1 = cx - 285, px2 = cx + 285, py1 = WIN_H * 0.18f, py2 = WIN_H * 0.84f;
+        glBegin(GL_QUADS);
+        glVertex2f(px1, py1); glVertex2f(px2, py1); glVertex2f(px2, py2); glVertex2f(px1, py2);
+        glEnd();
+
+        // ── Panel border (pulsing red) ──
+        float la = 0.55f + 0.45f * sinf(t * 3.0f);
+        glColor4f(1.0f, 0.12f, 0.0f, la);
+        glLineWidth(2.0f);
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(px1, py1); glVertex2f(px2, py1); glVertex2f(px2, py2); glVertex2f(px1, py2);
+        glEnd();
+
+        // Divider lines
         glBegin(GL_LINES);
-        glVertex2f(-0.85f, 0.38f); glVertex2f(0.85f, 0.38f);
-        glVertex2f(-0.85f,-0.38f); glVertex2f(0.85f,-0.38f);
+        glVertex2f(px1 + 20, WIN_H * 0.68f); glVertex2f(px2 - 20, WIN_H * 0.68f);
+        glVertex2f(px1 + 20, WIN_H * 0.30f); glVertex2f(px2 - 20, WIN_H * 0.30f);
         glEnd();
+        glLineWidth(1.0f);
 
-        // CRASHED! title – pulsing orange/red
-        float t = gGlobalTime;
-        float pr = 1.0f;
-        float pg = 0.1f + 0.15f * sinf(t * 4.0f);
-        drawText2D(-0.16f, 0.55f, "CRASHED!", pr, pg, 0.0f, GLUT_BITMAP_TIMES_ROMAN_24);
+        // ── MISSION FAILED (stroke with color pulse) ──
+        float titleA = 0.88f + 0.12f * sinf(t * 4.0f);
+        strokeCentered(cx, WIN_H * 0.72f, "MISSION FAILED", 0.26f, 1.0f, 0.04f * sinf(t * 3.0f + 1.0f), 0.04f, titleA);
 
         // Score summary
-        char gbuf[128];
-        snprintf(gbuf, sizeof(gbuf), "FINAL SCORE :  %d", gScore);
-        drawText2D(-0.28f, 0.18f, gbuf, 1.0f, 0.85f, 0.0f, GLUT_BITMAP_TIMES_ROMAN_24);
+        char buf[128];
+        snprintf(buf, sizeof(buf), "FINAL SCORE :  %05d", gScore);
+        glColor3f(1.0f, 0.85f, 0.0f);
+        bitmapCentered(cx, WIN_H * 0.55f, buf, GLUT_BITMAP_TIMES_ROMAN_24);
 
-        snprintf(gbuf, sizeof(gbuf), "BEST SCORE  :  %d", gHighScore);
-        drawText2D(-0.28f, 0.07f, gbuf, 0.5f, 0.8f, 1.0f, GLUT_BITMAP_HELVETICA_18);
+        snprintf(buf, sizeof(buf), "BEST SCORE  :  %05d", gHighScore);
+        glColor3f(0.4f, 0.80f, 1.0f);
+        bitmapCentered(cx, WIN_H * 0.48f, buf, GLUT_BITMAP_HELVETICA_18);
 
-        snprintf(gbuf, sizeof(gbuf), "TOP SPEED   :  %.0f MPH", gBaseSpeed * 5.0f);
-        drawText2D(-0.28f, -0.04f, gbuf, 0.6f, 1.0f, 0.8f, GLUT_BITMAP_HELVETICA_18);
+        snprintf(buf, sizeof(buf), "TOP SPEED   :  %.0f MPH", gBaseSpeed * 5.0f);
+        glColor3f(0.6f, 1.0f, 0.8f);
+        bitmapCentered(cx, WIN_H * 0.41f, buf, GLUT_BITMAP_HELVETICA_18);
 
         // Restart hint (blinking)
         float blink = 0.55f + 0.45f * sinf(t * 2.5f);
-        drawText2D(-0.28f, -0.18f, "[ Press  R  to  Race  Again ]",
-                   blink, blink, blink, GLUT_BITMAP_HELVETICA_18);
+        glColor4f(blink, blink, blink, 1.0f);
+        bitmapCentered(cx, WIN_H * 0.24f, "[ Press  R  to  Race  Again ]", GLUT_BITMAP_HELVETICA_18);
 
         // Developer credit bar
         glColor4f(0.12f, 0.02f, 0.0f, 0.78f);
         glBegin(GL_QUADS);
-        glVertex2f(-1.0f,-0.72f); glVertex2f(1.0f,-0.72f);
-        glVertex2f(1.0f,-0.52f); glVertex2f(-1.0f,-0.52f);
+        glVertex2f(0, 30); glVertex2f(WIN_W, 30);
+        glVertex2f(WIN_W, 70); glVertex2f(0, 70);
         glEnd();
 
         float cr = 1.0f;
@@ -838,11 +991,14 @@ static void display() {
         glLineWidth(2.0f);
         glColor4f(cr, cg, cb, 0.9f);
         glBegin(GL_LINES);
-        glVertex2f(-1.0f,-0.52f); glVertex2f(1.0f,-0.52f);
+        glVertex2f(0, 70); glVertex2f(WIN_W, 70);
         glEnd();
 
-        drawText2D(-0.25f, -0.67f, "Developed by  AL AMIN HOSSAIN",
-                   cr, cg, cb, GLUT_BITMAP_HELVETICA_18);
+        bitmapCentered(cx, 45, "Developed by AL AMIN HOSSAIN", GLUT_BITMAP_HELVETICA_18);
+
+        glMatrixMode(GL_PROJECTION); glPopMatrix();
+        glMatrixMode(GL_MODELVIEW); glPopMatrix();
+        glEnable(GL_DEPTH_TEST);
     }
 
     glutSwapBuffers();
@@ -858,7 +1014,7 @@ static void reshape(int w, int h) {
 //  Input
 // ──────────────────────────────────────────────────────────────
 static void specialKeyDown(int key, int, int) {
-    if (!gGameOver) {
+    if (gState == STATE_PLAY && !gPaused) {
         if (key == GLUT_KEY_LEFT && gTargetLane > 0) {
             gTargetLane--;
         }
@@ -870,9 +1026,21 @@ static void specialKeyDown(int key, int, int) {
 
 static void normalKeyboard(unsigned char key, int, int) {
     if (key == 27) exit(0);
-    if (key == 'r' || key == 'R') resetGame();
-    if (key == 'p' || key == 'P' || key == ' ') {
-        if (!gGameOver) {
+
+    if (gState == STATE_HOME) {
+        if (key == ' ' || key == 13) {
+            resetGame();
+        }
+        return;
+    }
+
+    if (gState == STATE_GAMEOVER) {
+        if (key == 'r' || key == 'R') resetGame();
+        return;
+    }
+
+    if (gState == STATE_PLAY) {
+        if (key == 'p' || key == 'P' || key == ' ') {
             gPaused = !gPaused;
             if (gPaused) pauseBGM();
             else resumeBGM();
@@ -886,12 +1054,19 @@ static void normalKeyboard(unsigned char key, int, int) {
 int main(int argc, char** argv) {
     srand((unsigned int)time(nullptr));
     glutInit(&argc, argv);
-    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH | GLUT_MULTISAMPLE);
     glutInitWindowSize(WIN_W, WIN_H);
     glutCreateWindow("Neo Racing 3D: Pro Edition @alamin");
+    glutFullScreen();
 
+    glEnable(GL_MULTISAMPLE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_NORMALIZE);
     glClearColor(0.01f, 0.02f, 0.05f, 1.0f);
-    resetGame();
+
+    loadHighScore();
+    gState = STATE_HOME;
 
     glutDisplayFunc(display);
     glutReshapeFunc(reshape);
