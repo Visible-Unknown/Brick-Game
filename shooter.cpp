@@ -132,10 +132,25 @@ static float gPowerupMsgTimer= 0.0f;
 static float gMsgColor[3]    = {1,1,1};
 
 static int   gLastMs = 0;
+static const char* SAVE_FILE = "highscore.dat";
 
 // ──────────────────────────────────────────────────────────────
-//  Helpers
+//  Persistence
 // ──────────────────────────────────────────────────────────────
+static void saveHighScore(){
+    FILE* f = fopen(SAVE_FILE, "w");
+    if(f){
+        fprintf(f, "%d", gHighScore);
+        fclose(f);
+    }
+}
+static void loadHighScore(){
+    FILE* f = fopen(SAVE_FILE, "r");
+    if(f){
+        if(fscanf(f, "%d", &gHighScore) != 1) gHighScore = 0;
+        fclose(f);
+    }
+}
 static float frand(float lo, float hi){
     return lo + (hi-lo)*(float)rand()/(float)RAND_MAX;
 }
@@ -1015,6 +1030,7 @@ static void resetGame(){
 
     initStars();
     initAsteroidsBg();
+    loadHighScore(); 
 
     gFireCooldown=0; gEnemySpawnTimer=0; gDifficulty=1.0f;
     gScore=0; gPlayerHP=3; gState=STATE_PLAY;
@@ -1142,22 +1158,21 @@ static void update(float dt){
 #ifdef _WIN32
                     PlaySound(TEXT("shooter music/crash_new.mp3"),NULL,SND_FILENAME|SND_ASYNC);
 #endif
-                } else {
-                    gPlayerHP--; gCameraShake=1.0f;
-#ifdef _WIN32
-                    PlaySound(TEXT("shooter music/crash_new.mp3"),NULL,SND_FILENAME|SND_ASYNC);
-#endif
                     if(gPlayerHP<=0){
                         gState=STATE_GAMEOVER; gCameraShake=2.0f;
                         spawnParticles(Vec3(gPlayerX,gPlayerY,0.5f),1.0f,0.2f,0.0f,40);
                     }
                 }
-                if(gScore>gHighScore) gHighScore=gScore;
+                if(gScore>gHighScore) { gHighScore=gScore; saveHighScore(); }
             }
+
             if(gEnemies[i].pos.y<0.0f){
                 gEnemies[i].active=false;
                 gPlayerHP--; gCameraShake=0.5f;
-                if(gPlayerHP<=0){ gState=STATE_GAMEOVER; if(gScore>gHighScore) gHighScore=gScore; }
+                if(gPlayerHP<=0){ 
+                    gState=STATE_GAMEOVER; 
+                }
+                if(gScore>gHighScore) { gHighScore=gScore; saveHighScore(); }
             }
         }
 
