@@ -31,8 +31,22 @@ A classic fixed-screen arcade shooter. Fend off descending waves of hostile geom
 
 ---
 
+### ⬛ TETRIS: NEURAL GRID (Evolution)
+A high-performance, competitive-grade 3D Tetris with professional rotation physics and an adaptive difficulty engine that scales with your Actions Per Minute (APM).
+
+**Neural Core Power-Ups:**
+*   ⏳ **Chronos Delay:** Halves piece gravity for 15 seconds.
+*   🧨 **Neural Wipe:** Vaporizes the bottom 3 rows of the grid instantly.
+*   🧠 **Synaptic Multiplier:** Triples all score and combo gains for 12 seconds.
+
+**Advanced Mechanics:**
+*   **SRS Wall Kicks:** Full implementation of the Super Rotation System for tactical piece kicks.
+*   **Notification Engine:** Dynamic floating labels for "T-SPIN", "TETRIS", and "LEVEL UP".
+*   **DAS Engine:** Custom 60Hz Delayed Auto Shift for fluid, competitive-speed movement.
+
+---
+
 ### ⏳ Future Expansion
-*   **Neo Tetris 3D:** Timeless block-stacking with volumetric depth.
 *   **Neo Snake 3D:** Fully 3-dimensional take on the classic grid-crawler.
 
 ---
@@ -64,17 +78,25 @@ g++ racing.cpp -o racing.exe -lfreeglut -lopengl32 -lglu32 -lwinmm
 g++ shooter.cpp -o shooter.exe -lfreeglut -lopengl32 -lglu32 -lwinmm
 ```
 
+**Neo Tetris:**
+```powershell
+g++ tetris.cpp -o tetris.exe -lfreeglut -lopengl32 -lglu32 -lwinmm
+```
+
 ### Audio Setup
 The audio system expects specific sub-directories alongside the compiled `.exe`:
 
 *   **For Racing**: Place the `audio/` folder containing `bgm.mp3`, `crash.wav`, and `pickup.wav`.
 *   **For Shooter**: Place the `shooter music/` folder containing `bgm_new.mp3`, `fire_new.mp3`, `pickup_new.mp3`, and `crash_new.mp3`.
+*   **For Tetris**: Place the `audio/` folder containing `music.mp3`.
 
 ## ⌨️ Global Controls
 
-*   **Arrow Keys**: Move ship / Steer car
-*   **SPACE**: Fire Laser (Shooter Only)
-*   **P**: **Pause / Resume** the game and music
+*   **Arrow Keys**: Move ship / Steer car / Move piece
+*   **SPACE**: Fire Laser (Shooter) / Hard Drop (Tetris) / Initialize Game
+*   **P**: **Pause / Resume** the simulation and music
+*   **M**: Toggle Neural Background Music (Tetris)
+*   **G**: Toggle Ghost Piece (Tetris)
 *   **R**: Fast Restart / Respawn
 *   **ESC**: Power off / Quit to Desktop
 
