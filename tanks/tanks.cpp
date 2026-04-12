@@ -7,9 +7,9 @@
  *  ─────────────────────────────────────────────────────────────
  *  • Full-screen immersive tactical tank combat
  *  • Professional Stroke-Font UI with neon glowing titles
- *  • "Mission Failed" high-impact crash overlay
+ *  • Pro Audio System: High-energy synthwave BGM tracks
+ *  • Power-up System: Shield, Rapid Fire, Speed Boost, Mega Bomb
  *  • Dynamic camera shake and shell resonance
- *  • Sophisticated 3D tank models with independent turret logic
  *  • Additive-blended particle explosions and power-up beams
  *
  *  CONTROLS
@@ -57,7 +57,7 @@ const float HALF_GRID = (GRID_SIZE * CELL_SIZE) / 2.0f;
 
 enum BlockType  { BT_EMPTY=0, BT_BRICK=1, BT_STEEL=2 };
 enum GameState  { STATE_HOME, STATE_PLAY, STATE_GAMEOVER };
-enum PowerupType { PT_RAPID, PT_SHIELD, PT_SPEED };
+enum PowerupType { PT_RAPID, PT_SHIELD, PT_SPEED, PT_BOMB };
 
 struct Vec3 {
     float x, y, z;
@@ -108,7 +108,7 @@ static std::vector<Powerup> gPowerups;
 static bool gKeyLeft=0, gKeyRight=0, gKeyUp=0, gKeyDown=0, gKeySpace=0;
 static int gScore=0, gHighScore=0;
 static float gGlobalTime=0.0f, gDifficulty=1.0f;
-static float gPlayerShieldTimer=0.0f, gPlayerRapidTimer=0.0f;
+static float gPlayerShieldTimer=0.0f, gPlayerRapidTimer=0.0f, gPlayerSpeedTimer=0.0f;
 static float gCameraShake = 0.0f;
 static bool gPaused=false;
 static int gLastMs=0;
@@ -144,7 +144,38 @@ static void spawnParticles(Vec3 pos, float r, float g, float b, int count) {
 }
 
 // ──────────────────────────────────────────────────────────────
-//  UI Drawing Utilities (from Shooter Engine)
+//  Audio Helpers
+// ──────────────────────────────────────────────────────────────
+static void playSfx(const char* filename) {
+#ifdef _WIN32
+    PlaySoundA(filename, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+#endif
+}
+
+static void stopBgm() {
+#ifdef _WIN32
+    mciSendStringA("stop bgm", NULL, 0, NULL);
+    mciSendStringA("close bgm", NULL, 0, NULL);
+#endif
+}
+
+static void startBgm(const char* filename) {
+#ifdef _WIN32
+    stopBgm();
+    char cmd[512];
+    // Attempt to open with mpegvideo type
+    snprintf(cmd, sizeof(cmd), "open \"%s\" type mpegvideo alias bgm", filename);
+    if (mciSendStringA(cmd, NULL, 0, NULL) != 0) {
+        // Fallback: let MCI infer the type from extension
+        snprintf(cmd, sizeof(cmd), "open \"%s\" alias bgm", filename);
+        mciSendStringA(cmd, NULL, 0, NULL);
+    }
+    mciSendStringA("play bgm repeat", NULL, 0, NULL);
+#endif
+}
+
+// ──────────────────────────────────────────────────────────────
+//  UI Drawing Utilities
 // ──────────────────────────────────────────────────────────────
 static void bitmapAt(float px, float py, const char* s, void* font=GLUT_BITMAP_HELVETICA_18){
     glRasterPos2f(px,py);
@@ -194,8 +225,9 @@ static void resetGame() {
     gPlayer.active = true;
     gPlayer.fireCooldown = 0;
     gEnemies.clear(); gShells.clear(); gParticles.clear(); gPowerups.clear();
-    gScore = 0; gDifficulty = 1.0f; gPlayerShieldTimer = 0; gPlayerRapidTimer = 0;
+    gScore = 0; gDifficulty = 1.0f; gPlayerShieldTimer = 0; gPlayerRapidTimer = 0; gPlayerSpeedTimer = 0;
     gCameraShake = 0; gState = STATE_PLAY;
+    startBgm("tanks music/bgm_play.mp3");
 }
 
 static void spawnEnemy() {
@@ -219,7 +251,8 @@ static void update(float dt) {
     if(gPowerupMsgTimer > 0) gPowerupMsgTimer -= dt;
 
     if(gState == STATE_PLAY) {
-        float moveSpd = (gPlayerRapidTimer > 0 ? 8.0f : 5.5f) * dt;
+        float moveBase = (gPlayerSpeedTimer > 0 ? 9.5f : 6.0f);
+        float moveSpd = moveBase * dt;
         float nextX = gPlayer.pos.x, nextY = gPlayer.pos.y;
         if(gKeyUp)    { nextY += moveSpd; gPlayer.angle = 90.0f; }
         if(gKeyDown)  { nextY -= moveSpd; gPlayer.angle = 270.0f; }
@@ -239,15 +272,17 @@ static void update(float dt) {
             gShells.push_back(s);
             gPlayer.fireCooldown = (gPlayerRapidTimer > 0) ? 0.12f : 0.35f;
             gCameraShake += 0.1f;
+            playSfx("tanks music/fire.wav");
         }
 
         if(gPlayerShieldTimer > 0) gPlayerShieldTimer -= dt;
         if(gPlayerRapidTimer > 0) gPlayerRapidTimer -= dt;
+        if(gPlayerSpeedTimer > 0) gPlayerSpeedTimer -= dt;
         if(gEnemies.size() < (size_t)(2 + gScore/1200)) { if(frand(0,1) < 0.012f) spawnEnemy(); }
     }
 
     // Shells
-    float shellSpd = 14.0f * dt;
+    float shellSpd = 16.0f * dt;
     for(auto& s : gShells) {
         if(!s.active) continue;
         s.pos.x += s.dir.x * shellSpd; s.pos.y += s.dir.y * shellSpd;
@@ -264,9 +299,11 @@ static void update(float dt) {
                 if(dx*dx + dy*dy < 1.0f) {
                     e.active = false; s.active = false; spawnParticles(e.pos, 1, 0.3, 0.1, 25);
                     gScore += 150; gCameraShake += 0.3f;
-                    if(rand()%12 == 0) {
+                    playSfx("tanks music/explosion.wav");
+                    if(rand()%10 == 0) {
                         Powerup p; p.pos = e.pos; p.active = true; p.life = 12.0f;
-                        int r = rand()%3; p.type = (r==0) ? PT_SHIELD : (r==1 ? PT_RAPID : PT_SPEED);
+                        int r = rand()%10; 
+                        if(r<3) p.type = PT_SHIELD; else if(r<6) p.type = PT_RAPID; else if(r<9) p.type = PT_SPEED; else p.type = PT_BOMB;
                         gPowerups.push_back(p);
                     }
                     break;
@@ -278,7 +315,11 @@ static void update(float dt) {
                 s.active = false;
                 if(gPlayerShieldTimer <= 0) {
                     gPlayer.hp--; gCameraShake = 0.8f; spawnParticles(gPlayer.pos, 1, 0, 0, 20);
-                    if(gPlayer.hp <= 0) { gState = STATE_GAMEOVER; if(gScore > gHighScore) { gHighScore = gScore; saveHighScore(); } }
+                    playSfx("tanks music/explosion.wav");
+                    if(gPlayer.hp <= 0) { 
+                        gState = STATE_GAMEOVER; if(gScore > gHighScore) { gHighScore = gScore; saveHighScore(); } 
+                        startBgm("tanks music/bgm_menu.mp3");
+                    }
                 } else { spawnParticles(s.pos, 0, 1, 1, 12); }
             }
         }
@@ -302,10 +343,18 @@ static void update(float dt) {
 
     // Powerups & Particles
     for(auto& p : gPowerups) {
-        if(pow(gPlayer.pos.x-p.pos.x,2)+pow(gPlayer.pos.y-p.pos.y,2) < 1.5) {
-            if(p.type == PT_SHIELD) { gPlayerShieldTimer = 8.0f; strcpy(gPowerupMsg, "IRON SHIELD ACTIVE"); }
-            else if(p.type == PT_RAPID) { gPlayerRapidTimer = 8.0f; strcpy(gPowerupMsg, "HYPER CANNON READY"); }
-            p.active = false; gPowerupMsgTimer = 2.0f;
+        if(pow(gPlayer.pos.x-p.pos.x,2)+pow(gPlayer.pos.y-p.pos.y,2) < 1.8) {
+            p.active = false; gPowerupMsgTimer = 3.0f;
+            playSfx("tanks music/powerup.wav");
+            if(p.type == PT_SHIELD) { gPlayerShieldTimer = 10.0f; strcpy(gPowerupMsg, "IRON SHIELD REINFORCED"); }
+            else if(p.type == PT_RAPID) { gPlayerRapidTimer = 10.0f; strcpy(gPowerupMsg, "HYPER CANNON ACTIVE"); }
+            else if(p.type == PT_SPEED) { gPlayerSpeedTimer = 10.0f; strcpy(gPowerupMsg, "TURBO ENGINES ENGAGED"); }
+            else if(p.type == PT_BOMB) {
+                strcpy(gPowerupMsg, "MEGA BOMB DETONATED"); gCameraShake = 2.5f;
+                for(auto& e : gEnemies) { e.active = false; spawnParticles(e.pos, 1, 0.4, 0, 30); gScore += 100; }
+                playSfx("tanks music/explosion.wav");
+            }
+            spawnParticles(p.pos, 1, 1, 1, 15);
         }
         p.life -= dt; if(p.life <= 0) p.active = false;
     }
@@ -318,6 +367,21 @@ static void update(float dt) {
 // ──────────────────────────────────────────────────────────────
 //  Rendering
 // ──────────────────────────────────────────────────────────────
+static void drawPowerup(const Powerup& p) {
+    glPushMatrix(); glTranslatef(p.pos.x, p.pos.y, 0.5f);
+    glRotatef(gGlobalTime * 150.0f, 0, 1, 0);
+    float bob = 0.2f * sinf(gGlobalTime * 4.0f); glTranslatef(0, 0, bob);
+    float r=1, g=1, b=1;
+    if(p.type == PT_SHIELD) { r=0; g=0.7; b=1; }
+    else if(p.type == PT_RAPID) { r=1; g=1; b=0; }
+    else if(p.type == PT_SPEED) { r=0.8; g=0.2; b=1; }
+    else { r=1; g=0.2; b=0; }
+    glDisable(GL_LIGHTING); glColor3f(r, g, b); glutWireTorus(0.15, 0.4, 8, 12);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glColor4f(r, g, b, 0.4f); glutSolidSphere(0.35, 12, 12);
+    glDisable(GL_BLEND); glEnable(GL_LIGHTING); glPopMatrix();
+}
+
 static void drawTank(float x, float y, float angle, float r, float g, float b, bool shield=false) {
     glPushMatrix(); glTranslatef(x, y, 0.25f); glRotatef(angle, 0, 0, 1);
     glColor3f(r*0.3f, g*0.3f, b*0.3f); glPushMatrix(); glScalef(1.4f, 1.1f, 0.5f); glutSolidCube(1.0f); glPopMatrix();
@@ -342,7 +406,6 @@ static void drawScene() {
         glVertex3f(-HALF_GRID, i, 0); glVertex3f(HALF_GRID, i, 0);
     }
     glEnd();
-    
     glEnable(GL_LIGHTING);
     for(int y=0; y<GRID_SIZE; y++) {
         for(int x=0; x<GRID_SIZE; x++) {
@@ -357,6 +420,7 @@ static void drawScene() {
             glPopMatrix();
         }
     }
+    for(auto& p : gPowerups) drawPowerup(p);
     drawTank(gPlayer.pos.x, gPlayer.pos.y, gPlayer.angle, 0.1f, 0.7f, 1.0f, gPlayerShieldTimer > 0);
     for(auto& e : gEnemies) drawTank(e.pos.x, e.pos.y, e.angle, 1.0f, 0.1f, 0.2f);
     glDisable(GL_LIGHTING); glPointSize(6.0f); glBegin(GL_POINTS);
@@ -371,19 +435,16 @@ static void drawHUD() {
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, WIN_W, 0, WIN_H);
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
     glDisable(GL_DEPTH_TEST); glDisable(GL_LIGHTING);
-    
     glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glColor4f(0, 0.04, 0.12, 0.88); glBegin(GL_QUADS); glVertex2f(0, WIN_H-65); glVertex2f(WIN_W, WIN_H-65); glVertex2f(WIN_W, WIN_H); glVertex2f(0, WIN_H); glEnd();
     glColor4f(0, 0.7, 1.0, 0.7); glLineWidth(2.5f); glBegin(GL_LINES); glVertex2f(0, WIN_H-65); glVertex2f(WIN_W, WIN_H-65); glEnd();
-    
     char buf[128]; glColor3f(0, 1, 1);
     snprintf(buf, sizeof(buf), "CORE STATUS: %d HP", gPlayer.hp); bitmapAt(30, WIN_H-42, buf, GLUT_BITMAP_TIMES_ROMAN_24);
     snprintf(buf, sizeof(buf), "NEURAL FLUX: %06d", gScore); bitmapCentered(WIN_W*0.5f, WIN_H-42, buf, GLUT_BITMAP_TIMES_ROMAN_24);
     snprintf(buf, sizeof(buf), "MAX RECORD: %06d", gHighScore); bitmapAt(WIN_W-280, WIN_H-42, buf, GLUT_BITMAP_TIMES_ROMAN_24);
-    
     if(gPowerupMsgTimer > 0) {
         float a = std::min(1.0f, gPowerupMsgTimer);
-        glColor4f(1, 0.8, 0, a); bitmapCentered(WIN_W*0.5f, WIN_H*0.6f, gPowerupMsg, GLUT_BITMAP_TIMES_ROMAN_24);
+        glColor4f(1, 0.8, 0, a); bitmapCentered(WIN_W*0.5f, WIN_H*0.72f, gPowerupMsg, GLUT_BITMAP_TIMES_ROMAN_24);
     }
     glDisable(GL_BLEND); glEnable(GL_DEPTH_TEST); glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
 }
@@ -450,10 +511,19 @@ static void idle() {
 }
 
 static void keyboard(unsigned char k, int x, int y) {
-    if(k == 27) exit(0);
+    if(k == 27) { stopBgm(); exit(0); }
     if(gState == STATE_HOME && (k == ' ' || k == 13)) resetGame();
     if(gState == STATE_GAMEOVER && (k == 'r' || k == 'R')) resetGame();
-    if(gState == STATE_PLAY) { if(k == ' ' ) gKeySpace = true; if(k == 'p' || k == 'P') gPaused = !gPaused; }
+    if(gState == STATE_PLAY) { 
+        if(k == ' ' ) gKeySpace = true; 
+        if(k == 'p' || k == 'P') {
+            gPaused = !gPaused;
+#ifdef _WIN32
+            if(gPaused) mciSendStringA("pause bgm", NULL, 0, NULL);
+            else mciSendStringA("resume bgm", NULL, 0, NULL);
+#endif
+        }
+    }
 }
 static void keyboardUp(unsigned char k, int x, int y) { if(k == ' ') gKeySpace = false; }
 static void special(int k, int x, int y) { if(k == GLUT_KEY_LEFT) gKeyLeft = true; if(k == GLUT_KEY_RIGHT) gKeyRight = true; if(k == GLUT_KEY_UP) gKeyUp = true; if(k == GLUT_KEY_DOWN) gKeyDown = true; }
@@ -476,6 +546,8 @@ int main(int argc, char** argv) {
     GLfloat lp[] = { 0, 0, 30, 1 }; glLightfv(GL_LIGHT0, GL_POSITION, lp);
     glutDisplayFunc(display); glutReshapeFunc(reshape); glutIdleFunc(idle);
     glutKeyboardFunc(keyboard); glutKeyboardUpFunc(keyboardUp); glutSpecialFunc(special); glutSpecialUpFunc(specialUp);
-    gLastMs = glutGet(GLUT_ELAPSED_TIME); glutMainLoop();
+    gLastMs = glutGet(GLUT_ELAPSED_TIME); 
+    startBgm("tanks music/bgm_menu.mp3");
+    glutMainLoop();
     return 0;
 }
