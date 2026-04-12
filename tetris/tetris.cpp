@@ -25,6 +25,8 @@
 
 #ifdef _WIN32
     #include <windows.h>
+    #include <mmsystem.h>
+    #pragma comment(lib, "winmm.lib")
 #endif
 #include <GL/glut.h>
 #include <GL/glu.h>
@@ -141,7 +143,7 @@ static const int   MOVE_RESET_MAX = 15;
 static float gRippleTime = 0.0f;
 static float gChaosWarningTimer = 0.0f;
 static std::vector<Notification> gNotifications;
-static bool gShowGhost = true;
+static bool gShowGhost = true, gMusicOn = true;
 static float gHardDropPulse = 0.0f;
 
 // SRS Wall Kick Tables (dx, dy)
@@ -213,6 +215,16 @@ static void initStars() {
         gNeuralGridV[i].pos = frand(-30, 30); gNeuralGridV[i].speed = frand(0.5f, 2.0f);
         gNeuralGridH[i].pos = frand(-30, 30); gNeuralGridH[i].speed = frand(0.5f, 2.0f);
     }
+}
+
+static void initAudio() {
+    mciSendString("open audio/music.mp3 type mpegvideo alias bgm", NULL, 0, NULL);
+    if(gMusicOn) mciSendString("play bgm repeat", NULL, 0, NULL);
+}
+static void toggleMusic() {
+    gMusicOn = !gMusicOn;
+    if(gMusicOn) mciSendString("play bgm repeat", NULL, 0, NULL);
+    else mciSendString("stop bgm", NULL, 0, NULL);
 }
 
 static void notify(const char* txt, float r, float g, float b, float sc=0.18f) {
@@ -469,6 +481,9 @@ static void lockPiece() {
 
         gScore += (pts[lnC]*gLevel*mult) + gCombo*50*mult;
         gCameraShake = 0.5f + lnC*0.2f;
+        
+        // Neural Pulse SFX
+        if(gMusicOn) Beep(440 + lnC*110, 80);
     } else {
         if(isTSpin) notify("T-SPIN", 1, 0.5f, 1, 0.12f);
         gRecoilVelY -= 3.0f; 
@@ -625,6 +640,7 @@ static void display() {
     snprintf(buf, 128, "LINES: %d", gLines); bitmapAt(65, WIN_H-260, buf, GLUT_BITMAP_HELVETICA_12);
     snprintf(buf, 128, "APM: %.1f", gAPM); bitmapAt(65, WIN_H-290, buf, GLUT_BITMAP_HELVETICA_12);
     snprintf(buf, 128, "PPS: %.2f", gPPS); bitmapAt(65, WIN_H-320, buf, GLUT_BITMAP_HELVETICA_12);
+    glColor3f(0.5f, 0.8f, 1.0f); snprintf(buf, 128, "MUSIC: %s", gMusicOn?"ON":"OFF"); bitmapAt(65, WIN_H-350, buf, GLUT_BITMAP_HELVETICA_12);
 
     if (gActivePower != PWR_NONE) {
         const char* pTxt[] = {"", "CHRONOS DR.", "NEURAL WIPE", "SYNC MULT."};
@@ -809,10 +825,15 @@ static void normalKeyboard(unsigned char k, int, int){
     if(gState==STATE_HOME && (k==' ' || k==13)) resetGame();
     else if(gState==STATE_GAMEOVER && (k=='r' || k=='R')) resetGame();
     else if(gState==STATE_PLAY || gState==STATE_PAUSE){
-        if(k=='p'||k=='P') gState = (gState == STATE_PLAY) ? STATE_PAUSE : STATE_PLAY;
+        if(k=='p'||k=='P') {
+            gState = (gState == STATE_PLAY) ? STATE_PAUSE : STATE_PLAY;
+            if(gState == STATE_PAUSE) mciSendString("pause bgm", NULL, 0, NULL);
+            else if(gMusicOn) mciSendString("resume bgm", NULL, 0, NULL);
+        }
         if(gState == STATE_PAUSE) return;
         if(k=='c'||k=='C'||k=='h'||k=='H') holdPiece();
         if(k=='g'||k=='G') gShowGhost = !gShowGhost;
+        if(k=='m'||k=='M') toggleMusic();
         if(k==' '){ 
             gActionCount++; int g=getGhostY(); gScore+=((int)gPieceY-g)*2; 
             gPieceY=(float)g; gHardDropPulse = 1.0f; lockPiece(); 
@@ -827,7 +848,7 @@ int main(int argc, char** argv) {
     glutInitWindowSize(WIN_W, WIN_H); glutCreateWindow("TETRIS: NEURAL GRID @alamin");
     glutFullScreen(); glEnable(GL_MULTISAMPLE); glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glEnable(GL_NORMALIZE);
     glClearColor(0.01f, 0.02f, 0.05f, 1.0f); glEnable(GL_COLOR_MATERIAL); glColorMaterial(GL_FRONT, GL_AMBIENT_AND_DIFFUSE);
-    loadHighScore(); initStars();
+    loadHighScore(); initStars(); initAudio();
     glutDisplayFunc(display); glutReshapeFunc([](int w, int h){ WIN_W=w; WIN_H=h?h:1; glViewport(0,0,w,h); });
     glutKeyboardFunc(normalKeyboard); glutSpecialFunc(specialKeyDown); glutSpecialUpFunc(specialKeyUp); 
     glutTimerFunc(16, updatePhysics, 0);
