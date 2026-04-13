@@ -12,8 +12,13 @@
     - **Line Flux (4-Match)**: Clears an entire horizontal or vertical row.
     - **Pulse Bomb (T/L-Match)**: Detonates in a 3x3 radius, shattering nearby crystals.
     - **Spectrum Cluster (5-Match)**: Swap with any color to clear all visible gems of that type.
+- **🛠️ Tactical Item System**: Manually trigged, limited-charge power-ups to escape tough situations:
+    - **🔨 Neural Hammer (Key '1')**: Instantly shatters the crystal currently highlighted by your selection cursor.
+    - **🌀 Vortex Shuffle (Key '2')**: Randomly reshuffles the entire board if you're stuck.
+    - **⏳ Temporal Freeze (Key '3')**: Completely pauses the flux timer for 10 seconds, giving you unlimited breathing room.
 - **🔄 Dynamic Cascading**: Realistic gravity-based falling physics and smooth swap animations.
 - **⏱️ Time-Attack Mode**: Frantic gameplay with score-based time bonuses and increasing multiplier scaling.
+- **🎵 Pro Audio Engine**: Features studio-produced ambient/synthwave background music and procedurally synthesized crystalline sound effects.
 - **💥 Visual Resonance**: Features camera shake, addictive glow effects, and additive-blended particle bursts.
 
 ---
@@ -23,6 +28,7 @@
 | :--- | :--- |
 | **Move Cursor** | Arrow Keys |
 | **Select / Swap** | `SPACE` |
+| **Tactical Items** | `1`, `2`, `3` |
 | **Pause / Resume** | `P` |
 | **Restart Game** | `R` (on Game Over) |
 | **Quit** | `ESC` |
