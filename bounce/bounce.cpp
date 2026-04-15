@@ -99,7 +99,7 @@ static float gTargetRadius = 0.5f; // Normal size
 static bool gInflated = false, gDeflated = false;
 static bool gOnGround = false;
 
-static float gGlobalTime=0, gCameraShake=0;
+static float gGlobalTime=0, gCameraShake=0, gFlash=0;
 static float gCamX=0, gCamY=0; // Camera follows ball
 static int gScore=0, gHighScore=0;
 static int gLives=3;
@@ -108,6 +108,7 @@ static int gRingsTotal=0, gRingsCollected=0;
 static bool gExitOpen=false;
 static bool gPaused=false;
 static bool gMoveLeft=false, gMoveRight=false, gJumpHeld=false;
+static bool gNewHighScore=false;
 
 static float gFreezeTimer=0, gSuperBounceTimer=0;
 
@@ -123,8 +124,14 @@ const char* SAVE_FILE = "highscore.dat";
 //  Helpers
 // ──────────────────────────────────────────────────────────────
 static float frand(float lo, float hi){ return lo+(hi-lo)*(float)rand()/(float)RAND_MAX; }
-static void saveHS(){ FILE* f=fopen(SAVE_FILE,"w"); if(f){fprintf(f,"%d",gHighScore); fclose(f);} }
-static void loadHS(){ FILE* f=fopen(SAVE_FILE,"r"); if(f){if(fscanf(f,"%d",&gHighScore)!=1) gHighScore=0; fclose(f);} }
+static void saveHS(){
+    FILE* f=fopen(SAVE_FILE,"w");
+    if(f){ fprintf(f,"%d",gHighScore); fclose(f); }
+}
+static void loadHS(){
+    FILE* f=fopen(SAVE_FILE,"r");
+    if(f){ if(fscanf(f,"%d",&gHighScore)!=1) gHighScore=0; fclose(f); }
+}
 static void spawnParticles(float px,float py,float r,float g,float b,int n){
     for(int i=0;i<n;i++){Particle p;p.x=px;p.y=py;p.vx=frand(-3,3);p.vy=frand(-3,3);p.life=1;p.r=r;p.g=g;p.b=b;gParticles.push_back(p);}
 }
@@ -183,8 +190,8 @@ static void buildLevel(int level){
 }
 
 static void resetGame(){
-    gScore=0; gLives=3; gLevel=1;
-    gState=STATE_PLAY; gPaused=false; gCameraShake=0;
+    gScore=0; gLives=3; gLevel=1; gNewHighScore=false;
+    gState=STATE_PLAY; gPaused=false; gCameraShake=0; gFlash=1.0f;
     gFreezeTimer=0; gSuperBounceTimer=0;
     buildLevel(gLevel);
     playBGM("../match3/match3 music/bgm_play.mp3", true);
@@ -192,9 +199,12 @@ static void resetGame(){
 
 static void die(){
     playSFX("../tanks/tanks music/explosion.wav");
-    gLives--; gCameraShake=1.0f;
+    gLives--; gCameraShake=1.0f; gFlash=0.8f;
     spawnParticles(gBallX,gBallY,1,0.2f,0.1f,30);
-    if(gLives<=0){ gState=STATE_GAMEOVER; playBGM(nullptr,false); if(gScore>gHighScore){gHighScore=gScore; saveHS();} }
+    if(gLives<=0){
+        gState=STATE_GAMEOVER; playBGM(nullptr,false);
+        if(gScore>gHighScore){ gHighScore=gScore; saveHS(); }
+    }
     else { gBallX=-10; gBallY=-5; gBallVX=0; gBallVY=0; gInflated=false; gDeflated=false; gTargetRadius=0.5f; }
 }
 
@@ -208,6 +218,17 @@ static void update(int){
     if(gState==STATE_PLAY && !gPaused){
         if(gFreezeTimer>0) gFreezeTimer-=dt;
         if(gSuperBounceTimer>0) gSuperBounceTimer-=dt;
+        
+        if(gScore > gHighScore){
+            bool wasFirstRecord = (gHighScore == 0);
+            gHighScore = gScore;
+            saveHS(); // Save every time record is broken
+            if(!gNewHighScore && !wasFirstRecord){
+                gNewHighScore = true;
+                spawnParticles(gBallX, gBallY, 1, 1, 0, 50);
+                playSFX("../racing/audio/pickup.wav");
+            }
+        }
         
         float effectiveDt = (gFreezeTimer>0) ? dt*0.3f : dt;
         
@@ -326,7 +347,8 @@ static void update(int){
     // Particles
     for(auto& p:gParticles){p.x+=p.vx*0.016f;p.y+=p.vy*0.016f;p.vy-=5*0.016f;p.life-=0.016f*1.5f;}
     gParticles.erase(std::remove_if(gParticles.begin(),gParticles.end(),[](const Particle& p){return p.life<=0;}),gParticles.end());
-    gCameraShake*=0.9f;
+    gCameraShake*=0.85f;
+    if(gFlash>0) gFlash-=dt*2.0f;
     glutPostRedisplay(); glutTimerFunc(16,update,0);
 }
 
@@ -339,10 +361,15 @@ static void bitmapCentered(float cx,float py,const char* s,void* f=GLUT_BITMAP_H
 static void strokeCentered(float cx,float cy,const std::string& s,float scale,float r,float g,float b,float a){
     float tw=0; for(char c:s) tw+=glutStrokeWidth(GLUT_STROKE_ROMAN,c);
     float sx=cx-tw*scale*0.5f;
-    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
-    glColor4f(r,g,b,a*0.35f); glLineWidth(6); glPushMatrix(); glTranslatef(sx,cy,0); glScalef(scale,scale,scale); for(char c:s) glutStrokeCharacter(GLUT_STROKE_ROMAN,c); glPopMatrix();
+    glEnable(GL_BLEND);
+    // Glow pass
+    glBlendFunc(GL_SRC_ALPHA,GL_ONE);
+    glColor4f(r,g,b,a*0.35f); glLineWidth(6.0f);
+    glPushMatrix(); glTranslatef(sx,cy,0); glScalef(scale,scale,scale); for(char c:s) glutStrokeCharacter(GLUT_STROKE_ROMAN,c); glPopMatrix();
+    // Sharp pass
     glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-    glColor4f(1,1,1,a); glLineWidth(2.5f); glPushMatrix(); glTranslatef(sx,cy,0); glScalef(scale,scale,scale); for(char c:s) glutStrokeCharacter(GLUT_STROKE_ROMAN,c); glPopMatrix();
+    glColor4f(1,1,1,a); glLineWidth(2.5f);
+    glPushMatrix(); glTranslatef(sx,cy,0); glScalef(scale,scale,scale); for(char c:s) glutStrokeCharacter(GLUT_STROKE_ROMAN,c); glPopMatrix();
     glLineWidth(1); glDisable(GL_BLEND);
 }
 
@@ -350,122 +377,170 @@ static void strokeCentered(float cx,float cy,const std::string& s,float scale,fl
 //  Rendering
 // ──────────────────────────────────────────────────────────────
 static void drawScene(){
-    // Grid bg
+    // Atmospheric Fog
+    glEnable(GL_FOG);
+    GLfloat fogCol[]={0.01f,0.02f,0.05f,1};
+    glFogfv(GL_FOG_COLOR,fogCol); glFogi(GL_FOG_MODE,GL_LINEAR);
+    glFogf(GL_FOG_START,15.0f); glFogf(GL_FOG_END,45.0f);
+
+    // Neural Grid (Scrolling with camera)
     glDisable(GL_LIGHTING); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
-    glColor4f(0.05f,0.1f,0.2f,0.1f); glLineWidth(1);
+    glColor4f(0.0f,0.4f,1.0f,0.15f); glLineWidth(1);
+    float gx=floorf(gCamX/2.0f)*2.0f, gy=floorf(gCamY/2.0f)*2.0f;
     glBegin(GL_LINES);
-    for(float x=-30;x<=60;x+=2){ glVertex3f(x,-15,-1); glVertex3f(x,15,-1); }
-    for(float y=-15;y<=15;y+=2){ glVertex3f(-30,y,-1); glVertex3f(60,y,-1); }
+    for(float x=gx-30;x<=gx+30;x+=2){ glVertex3f(x,gy-20,-2); glVertex3f(x,gy+20,-2); }
+    for(float y=gy-20;y<=gy+20;y+=2){ glVertex3f(gx-30,y,-2); glVertex3f(gx+30,y,-2); }
     glEnd(); glDisable(GL_BLEND);
     
     glEnable(GL_LIGHTING);
     
-    // Platforms
+    // Platforms (Structural Rails with Neon Edges)
     for(auto& p:gPlatforms){
         if(!p.alive) continue;
-        GLfloat d[]={p.r*0.7f,p.g*0.7f,p.b*0.7f,1}; GLfloat a[]={p.r*0.3f,p.g*0.3f,p.b*0.3f,1};
-        if(p.type==2){d[3]=0.6f; a[3]=0.6f;} // Glass is semi-transparent
+        // 1. Dark Base
+        GLfloat d[]={p.r*0.25f,p.g*0.25f,p.b*0.25f,1}; GLfloat a[]={0.02f,0.05f,0.1f,1};
+        if(p.type==2){d[3]=0.4f; a[3]=0.4f; glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);}
         glMaterialfv(GL_FRONT,GL_DIFFUSE,d); glMaterialfv(GL_FRONT,GL_AMBIENT,a);
-        if(p.type==2){ glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA); }
-        glPushMatrix(); glTranslatef(p.x,p.y,0); glScalef(p.w,p.h,0.5f); glutSolidCube(1); glPopMatrix();
+        glPushMatrix(); glTranslatef(p.x,p.y,0); glScalef(p.w,p.h,0.8f); glutSolidCube(1); glPopMatrix();
         if(p.type==2) glDisable(GL_BLEND);
+
+        // 2. Neon Edge Glow
         glDisable(GL_LIGHTING); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
-        glColor4f(p.r,p.g,p.b,0.6f); glLineWidth(1.5f);
-        glPushMatrix(); glTranslatef(p.x,p.y,0); glScalef(p.w,p.h,0.5f); glutWireCube(1.02f); glPopMatrix();
-        glDisable(GL_BLEND); glEnable(GL_LIGHTING);
+        float pulse = 0.6f + 0.4f*sinf(gGlobalTime*3 + p.x);
+        glColor4f(p.r,p.g,p.b,pulse*0.7f); glLineWidth(2.5f);
+        glPushMatrix(); glTranslatef(p.x,p.y,0); glScalef(p.w,p.h,0.8f); glutWireCube(1.02f); glPopMatrix();
         
-        // Spike indicators
+        // 3. Hazard indicators (Hard-Light)
         if(p.type==1){
-            glDisable(GL_LIGHTING);
-            int ns = (int)(p.w / 0.6f);
+            int ns = (int)(p.w / 0.8f);
             for(int s=0;s<ns;s++){
-                float sx=p.x-p.w/2+0.3f+s*0.6f;
-                glColor3f(1,0.3f,0.1f);
-                glBegin(GL_TRIANGLES); glVertex3f(sx-0.15f,p.y+p.h/2,0.3f); glVertex3f(sx+0.15f,p.y+p.h/2,0.3f); glVertex3f(sx,p.y+p.h/2+0.4f,0.3f); glEnd();
+                float sx=p.x-p.w/2+0.4f+s*0.8f;
+                float hp = 0.7f+0.3f*sinf(gGlobalTime*10+s);
+                glColor4f(1,0.2f,0,hp);
+                glBegin(GL_TRIANGLES); glVertex3f(sx-0.2f,p.y+p.h/2,0.4f); glVertex3f(sx+0.2f,p.y+p.h/2,0.4f); glVertex3f(sx,p.y+p.h/2+0.6f,0.4f); glEnd();
             }
-            glEnable(GL_LIGHTING);
         }
+        glDisable(GL_BLEND); glEnable(GL_LIGHTING);
     }
     
-    // Rings
+    // Rings (Data Spheres)
     for(auto& r:gRings){
         if(r.collected) continue;
-        r.pulse+=0.05f;
+        r.pulse+=0.06f;
         glDisable(GL_LIGHTING); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
-        float p=0.6f+0.4f*sinf(r.pulse);
-        glColor4f(1,1,0,p); glLineWidth(3);
-        glPushMatrix(); glTranslatef(r.x,r.y,0); glRotatef(r.pulse*30,0,1,0);
-        glutWireTorus(0.08f,0.4f,8,16);
-        glPopMatrix(); glDisable(GL_BLEND); glEnable(GL_LIGHTING);
+        float p=0.4f+0.3f*sinf(r.pulse*2);
+        
+        // Outer Shields
+        glColor4f(0,0.8f,1,p); glLineWidth(2);
+        glPushMatrix(); glTranslatef(r.x,r.y,0); glRotatef(r.pulse*40,0,1,1); glutWireTorus(0.04f,0.6f,8,16); glPopMatrix();
+        glPushMatrix(); glTranslatef(r.x,r.y,0); glRotatef(-r.pulse*60,1,0,1); glutWireTorus(0.04f,0.45f,8,16); glPopMatrix();
+        
+        // Inner Core
+        glColor4f(1,1,1,0.8f); glPushMatrix(); glTranslatef(r.x,r.y,0); glutSolidSphere(0.12f,8,8); glPopMatrix();
+        glDisable(GL_BLEND); glEnable(GL_LIGHTING);
     }
     
-    // Exit gate
-    glDisable(GL_LIGHTING);
+    // Exit Portal (Dimensional Vortex)
     if(gExitOpen){
-        float p=0.5f+0.5f*sinf(gGlobalTime*5);
-        glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
-        glColor4f(0,1,0.5f,p);
-        glPushMatrix(); glTranslatef(gExitX,gExitY,0);
-        glLineWidth(3); glutWireCube(2.0f);
-        glPopMatrix(); glDisable(GL_BLEND);
+        glDisable(GL_LIGHTING); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
+        float t = gGlobalTime*4;
+        for(int i=0;i<3;i++){
+            float s = 2.0f - i*0.5f;
+            float r = (i==0?0:0), g=(i==1?1:0.5f), b=1.0f;
+            glColor4f(r,g,b,0.4f/(i+1));
+            glPushMatrix(); glTranslatef(gExitX,gExitY,0); glRotatef(t*(i+1),0,0,1); glRotatef(t*0.5f,1,1,0);
+            glLineWidth(3); glutWireCube(s);
+            glPopMatrix();
+        }
+        glDisable(GL_BLEND); glEnable(GL_LIGHTING);
     } else {
-        glColor3f(0.3f,0.3f,0.3f);
-        glPushMatrix(); glTranslatef(gExitX,gExitY,0);
-        glLineWidth(2); glutWireCube(2.0f);
-        glPopMatrix();
+        glDisable(GL_LIGHTING); glColor3f(0.2f,0.2f,0.2f);
+        glPushMatrix(); glTranslatef(gExitX,gExitY,0); glLineWidth(1.5f); glutWireCube(2.0f); glPopMatrix();
+        glEnable(GL_LIGHTING);
     }
-    glEnable(GL_LIGHTING);
     
-    // Power-Ups
+    // Power-Ups (Glow Octahedrons)
     for(auto& pu:gPowerUps){
         if(!pu.alive) continue;
         pu.pulse+=0.05f;
         float pr=1,pg=1,pb=1;
-        if(pu.type==0){pr=1;pg=0.5f;pb=1;} else if(pu.type==1){pr=0.2f;pg=1;pb=0.2f;} else {pr=0.2f;pg=0.6f;pb=1;}
-        GLfloat d[]={pr*0.8f,pg*0.8f,pb*0.8f,1}; GLfloat a[]={pr*0.4f,pg*0.4f,pb*0.4f,1};
+        if(pu.type==0){pr=1;pg=0.4f;pb=1;} else if(pu.type==1){pr=0.2f;pg=1;pb=0.4f;} else {pr=0.2f;pg=0.8f;pb=1;}
+        
+        glDisable(GL_COLOR_MATERIAL);
+        GLfloat d[]={pr*0.9f,pg*0.9f,pb*0.9f,1}; GLfloat a[]={pr*0.2f,pg*0.2f,pb*0.2f,1};
         glMaterialfv(GL_FRONT,GL_DIFFUSE,d); glMaterialfv(GL_FRONT,GL_AMBIENT,a);
-        float hover=0.2f*sinf(pu.pulse);
-        glPushMatrix(); glTranslatef(pu.x,pu.y+hover,0.5f); glRotatef(pu.pulse*50,0,1,0);
+        float hover=0.25f*sinf(pu.pulse*1.5f);
+        glPushMatrix(); glTranslatef(pu.x,pu.y+hover,0.5f); glRotatef(pu.pulse*70,0,1,0); 
         glutSolidOctahedron();
-        glDisable(GL_LIGHTING); glColor3f(1,1,1); glutWireOctahedron(); glEnable(GL_LIGHTING);
-        glPopMatrix();
-    }
-    
-    // Ball
-    if(gState==STATE_PLAY){
-        float ballR=1,ballG=0.3f,ballB=0.1f;
-        if(gInflated){ballR=1;ballG=0.6f;ballB=0.8f;}
-        if(gDeflated){ballR=0.5f;ballG=0.5f;ballB=1.0f;}
-        GLfloat bd[]={ballR*0.8f,ballG*0.8f,ballB*0.8f,1}; GLfloat ba[]={ballR*0.4f,ballG*0.4f,ballB*0.4f,1};
-        glMaterialfv(GL_FRONT,GL_DIFFUSE,bd); glMaterialfv(GL_FRONT,GL_AMBIENT,ba);
-        glPushMatrix(); glTranslatef(gBallX,gBallY,0.5f);
-        glutSolidSphere(gBallRadius,16,16);
         glDisable(GL_LIGHTING); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
-        glColor4f(ballR,ballG,ballB,0.35f); glutSolidSphere(gBallRadius+0.15f,16,16);
-        glColor3f(1,1,1); glLineWidth(1.5f); glutWireSphere(gBallRadius+0.02f,12,12);
+        glColor4f(pr,pg,pb,0.5f); glutWireOctahedron();
         glDisable(GL_BLEND); glEnable(GL_LIGHTING);
         glPopMatrix();
     }
     
-    // Particles
+    // Ball (Reactor Core)
+    if(gState==STATE_PLAY){
+        float br=1,bg=0.3f,bb=0.1f;
+        if(gInflated){br=1;bg=0.7f;bb=0.9f;}
+        if(gDeflated){br=0.4f;bg=0.5f;bb=1.0f;}
+        
+        glPushMatrix(); glTranslatef(gBallX,gBallY,0.5f);
+        
+        // 1. Inner Energy Core
+        glDisable(GL_LIGHTING); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
+        glColor4f(br,bg,bb,0.8f); glutSolidSphere(gBallRadius*0.7f,16,16);
+        
+        // 2. Translucent Shell
+        glColor4f(br,bg,bb,0.3f); glutSolidSphere(gBallRadius,16,16);
+        
+        // 3. Stabilization Rings
+        glLineWidth(2); glColor4f(1,1,1,0.6f);
+        glPushMatrix(); glRotatef(gGlobalTime*100,0,1,0); glutWireTorus(0.02f,gBallRadius+0.1f,8,16); glPopMatrix();
+        glPushMatrix(); glRotatef(gGlobalTime*80,1,0,0); glutWireTorus(0.02f,gBallRadius+0.15f,8,16); glPopMatrix();
+        
+        glDisable(GL_BLEND); glEnable(GL_LIGHTING);
+        glPopMatrix();
+    }
+    
+    // Particles (Glowing trail/splatter)
     glDisable(GL_LIGHTING); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE); glPointSize(4);
     glBegin(GL_POINTS); for(auto& p:gParticles){glColor4f(p.r,p.g,p.b,p.life);glVertex3f(p.x,p.y,0.5f);} glEnd();
-    glDisable(GL_BLEND);
+    glDisable(GL_BLEND); glDisable(GL_FOG);
 }
 
 static void drawHUD(){
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0,WIN_W,0,WIN_H);
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity(); glDisable(GL_DEPTH_TEST); glDisable(GL_LIGHTING);
     glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-    glColor4f(0,0.04f,0.12f,0.88f); glRecti(0,WIN_H-65,WIN_W,WIN_H);
-    glColor4f(0,1,0.4f,0.7f); glLineWidth(2.5f); glBegin(GL_LINES); glVertex2f(0,WIN_H-65); glVertex2f(WIN_W,WIN_H-65); glEnd();
-    char buf[128]; glColor3f(0,1,0.4f);
+    
+    // Console Bar
+    glColor4f(0,0.02f,0.1f,0.85f); glRecti(0,WIN_H-65,WIN_W,WIN_H);
+    glColor4f(0,0.6f,1.0f,0.5f); glLineWidth(2); glBegin(GL_LINES); glVertex2f(0,WIN_H-65); glVertex2f(WIN_W,WIN_H-65); glEnd();
+    
+    // Scanlines
+    glColor4f(1,1,1,0.03f); glLineWidth(1); glBegin(GL_LINES); 
+    for(int y=WIN_H-65; y<WIN_H; y+=3){ glVertex2f(0,y); glVertex2f(WIN_W,y); }
+    glEnd();
+
+    char buf[128]; glColor3f(1,1,1);
     snprintf(buf,128,"SCORE: %06d",gScore); bitmapAt(30,WIN_H-42,buf,GLUT_BITMAP_TIMES_ROMAN_24);
-    snprintf(buf,128,"LEVEL: %d  LIVES: %d  RINGS: %d/%d",gLevel,gLives,gRingsCollected,gRingsTotal); bitmapCentered(WIN_W*0.5f,WIN_H-42,buf,GLUT_BITMAP_TIMES_ROMAN_24);
-    glColor3f(0,1,1); snprintf(buf,128,"PEAK: %06d",gHighScore); bitmapAt(WIN_W-220,WIN_H-42,buf,GLUT_BITMAP_TIMES_ROMAN_24);
-    if(gSuperBounceTimer>0){glColor3f(0.2f,1,0.2f);snprintf(buf,128,"SUPER BOUNCE: %.1fs",gSuperBounceTimer);bitmapCentered(WIN_W*0.5f,WIN_H-85,buf,GLUT_BITMAP_HELVETICA_18);}
-    if(gFreezeTimer>0){glColor3f(0.2f,0.6f,1);snprintf(buf,128,"TIME FREEZE: %.1fs",gFreezeTimer);bitmapCentered(WIN_W*0.5f,WIN_H-105,buf,GLUT_BITMAP_HELVETICA_18);}
-    if(gExitOpen){glColor3f(0,1,0.5f); bitmapCentered(WIN_W*0.5f,WIN_H-125,">> EXIT GATE OPEN <<",GLUT_BITMAP_HELVETICA_18);}
+    
+    glColor3f(0.8f,0.8f,0.8f);
+    snprintf(buf,128,"LV: %d  LIVES: %d  RINGS: %d/%d",gLevel,gLives,gRingsCollected,gRingsTotal); 
+    bitmapCentered(WIN_W*0.5f,WIN_H-42,buf,GLUT_BITMAP_HELVETICA_18);
+    
+    glColor3f(1,0.8f,0); snprintf(buf,128,"PEAK: %06d",gHighScore); 
+    bitmapAt(WIN_W-220,WIN_H-42,buf,GLUT_BITMAP_TIMES_ROMAN_24);
+
+    if(gNewHighScore){
+        float p = 0.5f+0.5f*sinf(gGlobalTime*10);
+        glColor4f(1,1,0,p); bitmapCentered(WIN_W*0.5f,WIN_H-85,"!! NEW RECORD !!",GLUT_BITMAP_HELVETICA_18);
+    }
+
+    if(gSuperBounceTimer>0){glColor3f(0.2f,1,0.2f);snprintf(buf,128,"SUPER BOUNCE: %.1fs",gSuperBounceTimer);bitmapCentered(WIN_W*0.5f,WIN_H-110,buf,GLUT_BITMAP_HELVETICA_18);}
+    if(gFreezeTimer>0){glColor3f(0.2f,0.6f,1);snprintf(buf,128,"TIME FREEZE: %.1fs",gFreezeTimer);bitmapCentered(WIN_W*0.5f,WIN_H-130,buf,GLUT_BITMAP_HELVETICA_18);}
+    if(gExitOpen){glColor3f(1,0.4f,0); bitmapCentered(WIN_W*0.5f,WIN_H-150,">> PORTAL ACTIVE <<",GLUT_BITMAP_TIMES_ROMAN_24);}
+    
     glDisable(GL_BLEND); glEnable(GL_DEPTH_TEST); glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
 }
 
@@ -475,37 +550,41 @@ static void drawOverlay(){
     float cx=WIN_W*0.5f;
     if(gState==STATE_HOME){
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-        glColor4f(0.02f,0,0.05f,0.88f); glRecti(0,0,WIN_W,WIN_H);
+        glColor4f(0.01f,0.01f,0.05f,0.92f); glRecti(0,0,WIN_W,WIN_H);
         float p=0.8f+0.2f*sinf(gGlobalTime*3);
-        strokeCentered(cx,WIN_H*0.65f,"NEO BOUNCE",0.45f,1,0.3f,0.1f,p);
-        strokeCentered(cx,WIN_H*0.48f,"REACTOR CORE",0.30f,0.4f,0.8f,1,p);
-        float blink=0.5f+0.5f*sinf(gGlobalTime*6); glColor3f(blink,blink,blink);
+        strokeCentered(cx,WIN_H*0.70f,"NEO BOUNCE",0.55f,0,0.6f,1,p);
+        strokeCentered(cx,WIN_H*0.58f,"REACTOR CORE",0.30f,0.4f,1,0.8f,p);
+        
+        char hb[64]; snprintf(hb,64,"PERSONAL BEST: %06d",gHighScore);
+        glColor3f(1,0.8f,0); bitmapCentered(cx,WIN_H*0.42f,hb,GLUT_BITMAP_HELVETICA_18);
+
+        float blink=0.5f+0.5f*sinf(gGlobalTime*6); glColor4f(1,1,1,blink);
         bitmapCentered(cx,WIN_H*0.28f,"[ PRESS SPACE TO INITIALIZE ]",GLUT_BITMAP_TIMES_ROMAN_24);
         glColor3f(0.5f,0.5f,0.5f);
-        bitmapCentered(cx,WIN_H*0.18f,"Z = Inflate  |  X = Deflate  |  Arrows = Move  |  Space = Jump",GLUT_BITMAP_HELVETICA_18);
+        bitmapCentered(cx,WIN_H*0.18f,"Arrows=Move  |  Space=Jump  |  Z/X=Inflate/Deflate",GLUT_BITMAP_HELVETICA_12);
         glDisable(GL_BLEND);
     } else if(gState==STATE_GAMEOVER){
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-        glColor4f(0.12f,0,0,0.92f); glRecti(0,0,WIN_W,WIN_H);
-        glBegin(GL_QUADS);glColor4f(0.04f,0,0.08f,0.75f);glVertex2f(cx-300,WIN_H*0.2f);glVertex2f(cx+300,WIN_H*0.2f);glVertex2f(cx+300,WIN_H*0.8f);glVertex2f(cx-300,WIN_H*0.8f);glEnd();
-        float la=0.6f+0.4f*sinf(gGlobalTime*4); glColor4f(1,0.15f,0.05f,la); glLineWidth(2.5f);
-        glBegin(GL_LINE_LOOP);glVertex2f(cx-300,WIN_H*0.2f);glVertex2f(cx+300,WIN_H*0.2f);glVertex2f(cx+300,WIN_H*0.8f);glVertex2f(cx-300,WIN_H*0.8f);glEnd();
-        strokeCentered(cx,WIN_H*0.7f,"CORE MELTDOWN",0.3f,1,0.1f,0,1);
+        glColor4f(0.08f,0,0.02f,0.95f); glRecti(0,0,WIN_W,WIN_H);
+        strokeCentered(cx,WIN_H*0.7f,"CORE MELTDOWN",0.35f,1,0.2f,0,1);
         char buf[128]; glColor3f(1,0.8f,0); snprintf(buf,128,"FINAL SCORE: %06d",gScore); bitmapCentered(cx,WIN_H*0.55f,buf,GLUT_BITMAP_TIMES_ROMAN_24);
-        glColor3f(0.4f,0.7f,1); snprintf(buf,128,"REACHED LEVEL: %d",gLevel); bitmapCentered(cx,WIN_H*0.48f,buf,GLUT_BITMAP_HELVETICA_18);
-        float blink=0.5f+0.5f*sinf(gGlobalTime*5); glColor4f(blink,blink,blink,1); bitmapCentered(cx,WIN_H*0.35f,"[ Press SPACE to Rebuild Core ]",GLUT_BITMAP_HELVETICA_18);
+        glColor3f(0.4f,0.7f,1); snprintf(buf,128,"SECTOR REACHED: %d",gLevel); bitmapCentered(cx,WIN_H*0.48f,buf,GLUT_BITMAP_HELVETICA_18);
+        
+        glColor3f(0.4f,0.4f,0.5f); bitmapCentered(cx,WIN_H*0.15f,"DEVELOPED BY AL AMIN HOSSAIN",GLUT_BITMAP_HELVETICA_12);
+
+        float blink=0.5f+0.5f*sinf(gGlobalTime*5); glColor4f(1,1,1,blink); bitmapCentered(cx,WIN_H*0.35f,"[ Press SPACE to Rebuild Core ]",GLUT_BITMAP_HELVETICA_18);
         glDisable(GL_BLEND);
     } else if(gState==STATE_WIN){
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-        glColor4f(0,0.05f,0.02f,0.92f); glRecti(0,0,WIN_W,WIN_H);
-        strokeCentered(cx,WIN_H*0.65f,"CORE STABILIZED",0.35f,0,1,0.5f,1);
+        glColor4f(0,0.05f,0.02f,0.95f); glRecti(0,0,WIN_W,WIN_H);
+        strokeCentered(cx,WIN_H*0.65f,"CORE STABILIZED",0.40f,0,1,0.5f,1);
         char buf[128]; glColor3f(1,1,0); snprintf(buf,128,"FINAL SCORE: %06d",gScore); bitmapCentered(cx,WIN_H*0.5f,buf,GLUT_BITMAP_TIMES_ROMAN_24);
-        float blink=0.5f+0.5f*sinf(gGlobalTime*5); glColor4f(blink,blink,blink,1); bitmapCentered(cx,WIN_H*0.35f,"[ Press SPACE to Replay ]",GLUT_BITMAP_HELVETICA_18);
+        float blink=0.5f+0.5f*sinf(gGlobalTime*5); glColor4f(1,1,1,blink); bitmapCentered(cx,WIN_H*0.35f,"[ Press SPACE to Replay ]",GLUT_BITMAP_HELVETICA_18);
         glDisable(GL_BLEND);
     } else if(gPaused){
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-        glColor4f(0,0,0,0.6f); glRecti(0,0,WIN_W,WIN_H);
-        strokeCentered(cx,WIN_H*0.55f,"PAUSED",0.35f,1,1,0,1); glDisable(GL_BLEND);
+        glColor4f(0,0,0,0.7f); glRecti(0,0,WIN_W,WIN_H);
+        strokeCentered(cx,WIN_H*0.55f,"PAUSED",0.40f,1,1,0,1); glDisable(GL_BLEND);
     }
     glEnable(GL_DEPTH_TEST); glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
 }
@@ -520,6 +599,16 @@ static void display(){
     drawScene();
     if(gState==STATE_PLAY) drawHUD();
     drawOverlay();
+    
+    // Screen Flash
+    if(gFlash>0){
+        glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0,WIN_W,0,WIN_H);
+        glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity(); glDisable(GL_DEPTH_TEST); glDisable(GL_LIGHTING);
+        glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
+        glColor4f(1,1,1,gFlash*0.5f); glRecti(0,0,WIN_W,WIN_H);
+        glDisable(GL_BLEND); glEnable(GL_DEPTH_TEST); glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
+    }
+    
     glutSwapBuffers();
 }
 
@@ -531,7 +620,10 @@ static void reshape(int w,int h){WIN_W=w; WIN_H=h?h:1; glViewport(0,0,WIN_W,WIN_
 static void specialDown(int k,int,int){ if(gState!=STATE_PLAY||gPaused)return; if(k==GLUT_KEY_LEFT)gMoveLeft=true; if(k==GLUT_KEY_RIGHT)gMoveRight=true; if(k==GLUT_KEY_UP)gJumpHeld=true; }
 static void specialUp(int k,int,int){ if(k==GLUT_KEY_LEFT)gMoveLeft=false; if(k==GLUT_KEY_RIGHT)gMoveRight=false; if(k==GLUT_KEY_UP)gJumpHeld=false; }
 static void keyDown(unsigned char k,int,int){
-    if(k==27) exit(0);
+    if(k==27){ 
+        if(gScore > gHighScore){ gHighScore = gScore; saveHS(); }
+        exit(0);
+    }
     if(k=='p'||k=='P') gPaused=!gPaused;
     if(k==' '&&gState==STATE_PLAY) gJumpHeld=true;
     if(k==' '&&gState!=STATE_PLAY) resetGame();
