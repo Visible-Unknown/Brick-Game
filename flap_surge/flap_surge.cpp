@@ -239,13 +239,32 @@ static void display() {
     }
     float cx = WIN_W * 0.5f;
     if (gState == STATE_HOME) {
-        glEnable(GL_BLEND); glColor4f(0, 0.05f, 0.1f, 0.85f); glRecti(0, 0, WIN_W, WIN_H);
-        strokeCentered(cx, WIN_H * 0.65f, "NEO FLAP-SURGE", 0.45f, 0, 0.8f, 1, 1);
-        strokeCentered(cx, WIN_H * 0.5f, "VOLTAGE RUN", 0.35f, 1, 1, 0, 1);
+        glEnable(GL_BLEND); glColor4f(0, 0.05f, 0.1f, 0.88f); glRecti(0, 0, WIN_W, WIN_H);
+        strokeCentered(cx, WIN_H * 0.68f, "NEO FLAP-SURGE", 0.48f, 0, 0.8f, 1, 1);
+        strokeCentered(cx, WIN_H * 0.58f, "VOLTAGE RUN", 0.32f, 1, 1, 0, 1);
+        
+        // Decorative Divider
+        glLineWidth(2.0f); glColor4f(0, 0.5f, 1, 0.4f);
+        glBegin(GL_LINES); glVertex2f(cx-200, WIN_H*0.53f); glVertex2f(cx+200, WIN_H*0.53f); glEnd();
+        
+        char hs[64]; snprintf(hs, 64, "PERSONAL BEST: %06d", gHighScore);
+        strokeCentered(cx, WIN_H * 0.42f, hs, 0.18f, 0, 1, 0.5, 1);
+        
+        float blink = 0.5f + 0.5f * sinf(gGlobalTime * 4.0f);
+        strokeCentered(cx, WIN_H * 0.25f, "PRESS SPACE TO START ENGINE", 0.20f, 0, 1, 0.8f, blink);
+        
+        // Developer Credit
+        strokeCentered(cx, WIN_H * 0.10f, "DEVELOPED BY AL AMIN HOSSAIN", 0.12f, 0.5f, 0.5f, 0.5f, 0.7f);
         glDisable(GL_BLEND);
     } else if (gState == STATE_GAMEOVER) {
         glEnable(GL_BLEND); glColor4f(0.12f, 0, 0, 0.88f); glRecti(0, 0, WIN_W, WIN_H);
-        strokeCentered(cx, WIN_H * 0.6f, "CIRCUIT BROKEN", 0.35f, 1, 0.2f, 0, 1);
+        strokeCentered(cx, WIN_H * 0.65f, "CIRCUIT BROKEN", 0.35f, 1, 0.2f, 0, 1);
+        char sbuf[64], hsbuf[64];
+        snprintf(sbuf, 64, "OUTPUT: %06d", gScore);
+        snprintf(hsbuf, 64, "SYSTEM PEAK: %06d", gHighScore);
+        strokeCentered(cx, WIN_H * 0.50f, sbuf, 0.25f, 1, 1, 1, 1);
+        strokeCentered(cx, WIN_H * 0.42f, hsbuf, 0.20f, 0, 1, 1, 1);
+        strokeCentered(cx, WIN_H * 0.20f, "[ PRESS SPACE TO REBOOT ]", 0.15f, 0.5, 0.5, 0.5, 1);
         glDisable(GL_BLEND);
     }
     glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
