@@ -47,15 +47,21 @@ struct Obstacle {
     bool passed;
 };
 struct Particle { float x, y, vx, vy, life, r, g, b; };
+enum PowerupType { PWR_SHIELD, PWR_CHRONOS, PWR_SURGE, PWR_NONE };
+struct Powerup { float x, y; PowerupType type; bool active; };
 
 static GameState gState = STATE_HOME;
 static float gBirdY = 0, gBirdVY = 0;
 static std::vector<Obstacle> gObs;
 static std::vector<Particle> gParts;
+static std::vector<Powerup> gPwrs;
 static int gScore = 0, gHighScore = 0;
 static float gGlobalTime = 0, gCamShake = 0, gWorldScroll = 0;
 static bool gPaused = false;
 static float gPipeSpeed = 5.0f;
+static PowerupType gActivePower = PWR_NONE;
+static float gPowerTimer = 0;
+static float gManualSpeedMult = 1.0f;
 const char* SAVE = "highscore.dat";
 
 static float frand(float a, float b) { return a + (b - a) * (float)rand() / (float)RAND_MAX; }
@@ -68,11 +74,16 @@ static void spawnP(float px, float py, float r, float g, float b, int n) {
 static void spawnObs(float x) {
     Obstacle o; o.x = x; o.gapY = frand(-H / 2 + 3, H / 2 - 3); o.gapSize = 4.5f; o.passed = false;
     gObs.push_back(o);
+    if (frand(0, 1) < 0.2f) {
+        PowerupType t = (PowerupType)(rand() % 3);
+        gPwrs.push_back({ x + 4.0f, frand(-H / 2 + 2, H / 2 - 2), t, true });
+    }
 }
 
 static void resetGame() {
     gScore = 0; gState = STATE_PLAY; gPaused = false; gBirdY = 0; gBirdVY = 0;
-    gObs.clear(); gParts.clear(); gWorldScroll = 0; gPipeSpeed = 5.0f;
+    gObs.clear(); gParts.clear(); gPwrs.clear(); gWorldScroll = 0; gPipeSpeed = 5.0f;
+    gActivePower = PWR_NONE; gPowerTimer = 0; gManualSpeedMult = 1.0f;
     for (int i = 0; i < 4; i++) spawnObs(10 + i * 8);
     playBGM("../shooter/audio/bgm.mp3", true);
 }
@@ -80,26 +91,55 @@ static void resetGame() {
 static void update(int) {
     float dt = 1.0f / 60.0f; gGlobalTime += dt;
     if (gState == STATE_PLAY && !gPaused) {
-        gBirdVY -= 25.0f * dt; gBirdY += gBirdVY * dt;
-        gWorldScroll += gPipeSpeed * dt;
-        gPipeSpeed = 5.0f + gScore * 0.05f;
+        float timeScale = (gActivePower == PWR_CHRONOS) ? 0.6f : 1.0f;
+        gBirdVY -= 25.0f * dt * timeScale; gBirdY += gBirdVY * dt * timeScale;
+        gWorldScroll += gPipeSpeed * dt * timeScale;
+        gPipeSpeed = (5.0f + gScore * 0.05f) * gManualSpeedMult;
+
+        if (gPowerTimer > 0) {
+            gPowerTimer -= dt;
+            if (gPowerTimer <= 0) gActivePower = PWR_NONE;
+        }
 
         if (gBirdY > H / 2 || gBirdY < -H / 2) {
-            playSFX("../tanks/tanks music/explosion.wav"); gCamShake = 1.0f; spawnP(0, gBirdY, 1, 0, 0, 30);
-            gState = STATE_GAMEOVER; playBGM(0, false); if (gScore > gHighScore) { gHighScore = gScore; saveHS(); }
+            if (gActivePower == PWR_SHIELD) {
+                gActivePower = PWR_NONE; gPowerTimer = 0; gBirdVY = 5; playSFX("../match3/match3 music/special.wav");
+            } else {
+                playSFX("../tanks/tanks music/explosion.wav"); gCamShake = 1.0f; spawnP(0, gBirdY, 1, 0, 0, 30);
+                gState = STATE_GAMEOVER; playBGM(0, false); if (gScore > gHighScore) { gHighScore = gScore; saveHS(); }
+            }
+        }
+
+        // Powerups
+        for (int i = (int)gPwrs.size() - 1; i >= 0; i--) {
+            auto& p = gPwrs[i]; p.x -= gPipeSpeed * dt * timeScale;
+            if (p.x < -W / 2 - 2) { gPwrs.erase(gPwrs.begin() + i); continue; }
+            if (p.active && fabs(p.x) < 0.6f && fabs(p.y - gBirdY) < 0.6f) {
+                p.active = false; gActivePower = p.type;
+                gPowerTimer = (p.type == PWR_SURGE) ? 8.0f : 5.0f;
+                playSFX("../match3/match3 music/special.wav"); spawnP(p.x, p.y, 1, 1, 1, 15);
+            }
         }
 
         for (int i = (int)gObs.size() - 1; i >= 0; i--) {
-            auto& o = gObs[i]; o.x -= gPipeSpeed * dt;
+            auto& o = gObs[i]; o.x -= gPipeSpeed * dt * timeScale;
             if (o.x < -W / 2 - 2) { gObs.erase(gObs.begin() + i); spawnObs(gObs.back().x + 8); continue; }
-            if (!o.passed && o.x < 0) { o.passed = true; gScore++; playSFX("../match3/match3 music/swap.wav"); }
+            if (!o.passed && o.x < 0) {
+                o.passed = true; gScore += (gActivePower == PWR_SURGE) ? 2 : 1;
+                playSFX("../match3/match3 music/swap.wav");
+            }
 
             // Collision
             float birdX = 0, birdR = 0.4f;
             if (fabs(o.x - birdX) < 1.0f) {
                 if (gBirdY + birdR > o.gapY + o.gapSize / 2 || gBirdY - birdR < o.gapY - o.gapSize / 2) {
-                    playSFX("../tanks/tanks music/explosion.wav"); gCamShake = 1.0f; spawnP(0, gBirdY, 1, 0, 0, 30);
-                    gState = STATE_GAMEOVER; playBGM(0, false); if (gScore > gHighScore) { gHighScore = gScore; saveHS(); }
+                    if (gActivePower == PWR_SHIELD) {
+                        gActivePower = PWR_NONE; gPowerTimer = 0; gCamShake = 0.5f; o.passed = true; 
+                        playSFX("../match3/match3 music/special.wav"); spawnP(0, gBirdY, 0, 1, 1, 20);
+                    } else {
+                        playSFX("../tanks/tanks music/explosion.wav"); gCamShake = 1.0f; spawnP(0, gBirdY, 1, 0, 0, 30);
+                        gState = STATE_GAMEOVER; playBGM(0, false); if (gScore > gHighScore) { gHighScore = gScore; saveHS(); }
+                    }
                 }
             }
         }
@@ -140,13 +180,30 @@ static void display() {
         glRectf(o.x - 0.8f, H / 2, o.x + 0.8f, o.gapY + o.gapSize / 2); // Top
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE); glColor4f(r, g, b, 0.8f); glLineWidth(3);
         glBegin(GL_LINE_LOOP); glVertex2f(o.x - 0.8f, -H / 2); glVertex2f(o.x + 0.8f, -H / 2); glVertex2f(o.x + 0.8f, o.gapY - o.gapSize / 2); glVertex2f(o.x - 0.8f, o.gapY - o.gapSize / 2); glEnd();
-        glBegin(GL_LINE_LOOP); glVertex2f(o.x - 0.8f, H / 2); glVertex2f(o.x + 0.8f, H / 2); glVertex2f(o.x + 0.8f, o.gapY + o.gapSize / 2); glVertex2f(o.x - 0.8f, o.gapY + o.gapSize / 2); glEnd();
+        glRectf(o.x - 0.8f, H / 2, o.x + 0.8f, o.gapY + o.gapSize / 2); // Top
         glDisable(GL_BLEND);
+    }
+
+    // Powerups
+    for (auto& p : gPwrs) {
+        if (!p.active) continue;
+        float r = 0, g = 1, b = 1; if (p.type == PWR_CHRONOS) { r = 0.8; g = 0.2; b = 1; } else if (p.type == PWR_SURGE) { r = 1; g = 0.8; b = 0; }
+        glPushMatrix(); glTranslatef(p.x, p.y, 0); glRotatef(gGlobalTime * 100, 0, 0, 1);
+        glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE); glColor4f(r, g, b, 0.8f);
+        glBegin(GL_LINE_LOOP); for (int i = 0; i < 6; i++) { float a = i * 2 * M_PI / 6; glVertex2f(cos(a) * 0.4f, sin(a) * 0.4f); } glEnd();
+        glColor4f(r, g, b, 0.3f); glBegin(GL_TRIANGLE_FAN); glVertex2f(0, 0); for (int i = 0; i <= 6; i++) { float a = i * 2 * M_PI / 6; glVertex2f(cos(a) * 0.3f, sin(a) * 0.3f); } glEnd();
+        glDisable(GL_BLEND); glPopMatrix();
     }
 
     // Bird
     if (gState != STATE_GAMEOVER) {
         glPushMatrix(); glTranslatef(0, gBirdY, 0); glRotatef(gBirdVY * 2, 0, 0, 1);
+        if (gActivePower != PWR_NONE) {
+            float r = 0, g = 1, b = 1; if (gActivePower == PWR_CHRONOS) { r = 0.8; g = 0.2; b = 1; } else if (gActivePower == PWR_SURGE) { r = 1; g = 0.8; b = 0; }
+            glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            glColor4f(r, g, b, 0.4f + 0.2f * sin(gGlobalTime * 10)); glutSolidSphere(0.6f, 15, 15);
+            glDisable(GL_BLEND);
+        }
         glColor3f(1, 1, 0); glBegin(GL_TRIANGLE_FAN); for (int i = 0; i < 20; i++) { float a = i * 2 * M_PI / 20; glVertex2f(cos(a) * 0.4f, sin(a) * 0.4f); } glEnd();
         glColor3f(1, 0.5f, 0); glBegin(GL_TRIANGLES); glVertex2f(0.3f, 0); glVertex2f(0.6f, 0); glVertex2f(0.3f, -0.2f); glEnd(); // Beak
         glColor3f(1, 1, 1); glPointSize(6); glBegin(GL_POINTS); glVertex2f(0.15f, 0.15f); glEnd(); // Eye
@@ -161,6 +218,24 @@ static void display() {
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, WIN_W, 0, WIN_H); glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
     if (gState == STATE_PLAY) {
         char buf[64]; glColor3f(0, 1, 0.5f); snprintf(buf, 64, "SCORE: %06d", gScore); glRasterPos2f(30, WIN_H - 40); for (char* c = buf; *c; c++)glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, *c);
+        
+        // Voltage Indicator
+        int volt = (int)(gManualSpeedMult * 100);
+        snprintf(buf, 64, "VOLTAGE: %d%%", volt);
+        if (volt > 150) glColor3f(1, 0.2f, 0.2f); // Overdrive Red
+        else if (volt < 80) glColor3f(0.2f, 0.6f, 1); // Low Voltage Blue
+        else glColor3f(0, 1, 1); // Normal Cyan
+        glRasterPos2f(WIN_W - 200, WIN_H - 40);
+        for (char* c = buf; *c; c++) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+
+        if (gActivePower != PWR_NONE) {
+            float r = 0, g = 1, b = 1; const char* pnm = "SHIELD";
+            if (gActivePower == PWR_CHRONOS) { r = 0.8; g = 0.2; b = 1; pnm = "CHRONOS"; }
+            else if (gActivePower == PWR_SURGE) { r = 1; g = 0.8; b = 0; pnm = "SURGE"; }
+            glEnable(GL_BLEND); glColor4f(r, g, b, 0.8f); glRectf(30, WIN_H - 70, 30 + gPowerTimer * 20, WIN_H - 60);
+            glRasterPos2f(30, WIN_H - 90); for (const char* c = pnm; *c; c++)glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+            glDisable(GL_BLEND);
+        }
     }
     float cx = WIN_W * 0.5f;
     if (gState == STATE_HOME) {
@@ -179,6 +254,8 @@ static void display() {
 
 static void keyDown(unsigned char k, int, int) {
     if (k == 27) exit(0); if (k == 'p' || k == 'P') gPaused = !gPaused;
+    if (k == '+' || k == '=') { gManualSpeedMult += 0.1f; if (gManualSpeedMult > 3.0f) gManualSpeedMult = 3.0f; playSFX("../match3/match3 music/swap.wav"); }
+    if (k == '-' || k == '_') { gManualSpeedMult -= 0.1f; if (gManualSpeedMult < 0.3f) gManualSpeedMult = 0.3f; playSFX("../match3/match3 music/swap.wav"); }
     if (k == ' ') {
         if (gState != STATE_PLAY) resetGame();
         else { gBirdVY = 8.5f; playSFX("../match3/match3 music/swap.wav"); }
